@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#13110f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="時間管理">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>[hidden]{display:none!important}html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}</style>
+<title>時間制限管理ツール</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap">
+<style>
+/* Layout: 店内の夜間照明に合わせたダーク固定。上に時計と警告帯、下に卓カードのグリッド。遠目モードは全画面で状態色だけを大きく出す。 */
+:root{
+  color-scheme: dark;
+  --bg:#13110f; --surface:#1f1b18; --surface-2:#2a2521; --line:#3a332d;
+  --fg:#f4ede5; --muted:#a99d90;
+  --ok:#3fbf7f; --lo:#4ea8ff; --warn:#ffd23f; --over:#ff3b30;
+  --on-warn:#1a1500; --on-color:#fff; --r3:#b65cff;
+  --font-jp:"Zen Kaku Gothic New","Hiragino Sans","Hiragino Kaku Gothic ProN",system-ui,sans-serif;
+  --font-num:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-jp);-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible{outline:3px solid var(--fg);outline-offset:2px}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+
+.app{min-height:100%;display:flex;flex-direction:column;padding-inline:16px;padding-block:12px 24px;gap:12px;box-shadow:inset 0 0 0 0 transparent;transition:box-shadow .3s}
+.app.glow-lo{box-shadow:inset 0 0 0 6px var(--lo)}
+.app.glow-warn{box-shadow:inset 0 0 0 8px var(--warn)}
+.app.glow-over{animation:edge 1s steps(2) infinite}
+@keyframes edge{0%{box-shadow:inset 0 0 0 10px var(--over)}100%{box-shadow:inset 0 0 0 10px transparent}}
+
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+.brand b{font-size:1.15rem;font-weight:900}
+.brand span{color:var(--muted);font-size:.8rem}
+.clock{font-size:clamp(2.2rem,5vw,3.2rem);font-weight:700;margin-left:auto}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.tbtn{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-weight:700;font-size:.95rem;min-height:44px}
+.tbtn.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.tbtn.big{background:var(--fg);color:var(--bg)}
+
+/* 警告帯 */
+.band{display:flex;gap:10px;overflow-x:auto;padding-bottom:2px;min-height:0}
+.band:empty{display:none}
+.chip{flex:0 0 auto;display:flex;align-items:center;gap:10px;border-radius:12px;padding:8px 16px 8px 12px;font-weight:900}
+.chip .t{font-family:var(--font-num);font-size:2.4rem;line-height:1}
+.chip .l{font-size:1rem}
+.chip.lo{background:var(--lo);color:var(--on-color)}
+.chip.warn{background:var(--warn);color:var(--on-warn)}
+.chip.over{background:var(--over);color:var(--on-color);animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.35}}
+
+.summary{display:flex;gap:16px;color:var(--muted);font-size:.85rem;flex-wrap:wrap}
+.summary b{color:var(--fg);font-family:var(--font-num);font-size:1.1rem}
+
+/* 卓グリッド */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.card{position:relative;text-align:left;background:var(--surface);border:2px solid var(--line);border-radius:14px;padding:12px 14px 14px;min-height:150px;display:flex;flex-direction:column;gap:6px;overflow:hidden;transition:transform .08s}
+.card:active{transform:scale(.97)}
+.card .name{font-family:var(--font-num);font-weight:700;font-size:2.4rem;line-height:1}
+.card .name small{font-family:var(--font-jp);font-size:.8rem;color:var(--muted);font-weight:700;margin-left:4px}
+.card.empty{border-style:dashed;color:var(--muted)}
+.card.empty .name{color:var(--fg);opacity:.75}
+.card.empty .hint{margin-top:auto;font-size:.85rem}
+.card .times{font-size:1.05rem;color:var(--muted);display:flex;gap:6px;align-items:baseline}
+.card .times .num{font-size:1.35rem;color:var(--fg);font-weight:600}
+.card .rem{margin-top:auto;font-family:var(--font-num);font-weight:700;font-size:2.2rem;line-height:1}
+.card .bar{position:absolute;left:0;bottom:0;height:5px;background:var(--ok);transition:width 1s linear}
+.flag{position:absolute;top:10px;right:10px;font-size:.8rem;font-weight:900;padding:4px 8px;border-radius:6px}
+.card.ok{border-color:#2f5a44}
+.card.lo{border-color:var(--lo)} .card.lo .flag{background:var(--lo);color:var(--on-color)} .card.lo .bar{background:var(--lo)}
+.card.warn{background:var(--warn);border-color:var(--warn);color:var(--on-warn)}
+.card.warn .times,.card.warn .times .num,.card.warn .name small{color:var(--on-warn)}
+.card.warn .flag{background:var(--on-warn);color:var(--warn)} .card.warn .bar{background:var(--on-warn)}
+.card.over{background:var(--over);border-color:var(--over);color:var(--on-color);animation:pulse 1.2s ease-in-out infinite}
+.card.over .times,.card.over .times .num,.card.over .name small{color:var(--on-color)}
+.card.over .flag{background:var(--on-color);color:var(--over)}
+@keyframes pulse{50%{filter:brightness(.7)}}
+.card .ack{font-size:.75rem;font-weight:700;opacity:.85}
+
+/* シート */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center;z-index:20;padding:16px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:18px;width:min(640px,100%);max-height:calc(100% - 24px);overflow:auto;padding:20px;display:flex;flex-direction:column;gap:18px}
+.sheet h2{margin:0;font-size:1.3rem;display:flex;align-items:baseline;gap:10px}
+.sheet h2 .num{font-size:2.6rem}
+.row{display:flex;flex-direction:column;gap:8px}
+.row label{font-size:.85rem;color:var(--muted);font-weight:700}
+.adj{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.adj .val{font-family:var(--font-num);font-size:2.2rem;font-weight:700;min-width:4.2ch;text-align:center}
+.sbtn{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;min-width:56px;min-height:48px;padding:0 12px;font-weight:700;font-size:1rem}
+.sbtn.wide{flex:1}
+.sbtn.on{background:var(--lo);border-color:var(--lo);color:#fff}
+.sbtn.danger{background:transparent;border-color:var(--over);color:var(--over)}
+.sbtn.danger.armed{background:var(--over);color:#fff}
+.sbtn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.moves{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px}
+.moves .sbtn{font-family:var(--font-num);font-size:1.4rem}
+.note{font-size:.8rem;color:var(--muted);line-height:1.6}
+.field{background:var(--bg);border:1px solid var(--line);border-radius:10px;color:var(--fg);padding:10px 12px;font:inherit;font-size:1rem;width:100%;box-sizing:border-box}
+textarea.field{min-height:90px;font-family:var(--font-num);font-size:1.2rem}
+.cfg{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* 遠目モード */
+.far{position:fixed;inset:0;background:#000;z-index:30;display:flex;flex-direction:column;padding:16px;padding-top:calc(16px + env(safe-area-inset-top,0px));gap:12px}
+.far-top{display:flex;align-items:center;gap:12px}
+.far-top .num{font-size:clamp(2.5rem,7vw,5rem);font-weight:700;color:#f4ede5}
+.far-top .tbtn{margin-left:auto}
+.far-grid{flex:1;display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));grid-auto-rows:1fr;min-height:0}
+.ftile{border-radius:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px;text-align:center}
+.ftile .n{font-family:var(--font-num);font-weight:700;font-size:clamp(5rem,16vw,13rem);line-height:.9}
+.ftile .s{font-size:clamp(1.4rem,3.6vw,3rem);font-weight:900}
+.ftile.lo{background:var(--lo);color:#fff}
+.ftile.warn{background:var(--warn);color:var(--on-warn)}
+.ftile.over{background:var(--over);color:#fff;animation:blink 1s steps(2) infinite}
+.far-calm{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#a99d90;text-align:center}
+.far-calm .big{font-size:clamp(2rem,6vw,4rem);font-weight:900;color:var(--ok)}
+.far-calm .next{font-size:clamp(1.2rem,3vw,2rem)}
+
+/* 回転数 */
+.round{display:inline-flex;align-items:center;font-size:.85rem;font-weight:900;padding:3px 9px;border-radius:999px;border:1.5px solid var(--muted);color:var(--muted);align-self:flex-start;line-height:1.2}
+.round.r2{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.round.r3{background:var(--r3);border-color:var(--r3);color:#fff}
+.card.warn .round:not(.r2):not(.r3),.card.over .round:not(.r2):not(.r3){border-color:currentColor;color:inherit}
+.card .count{font-size:.8rem;color:var(--muted)}
+.chip .r{font-size:.75rem;opacity:.9}
+.ftile .r{font-size:clamp(1rem,2.4vw,1.8rem);font-weight:900;padding:2px 14px;border-radius:999px;background:rgba(0,0,0,.25)}
+
+/* 到達ポップアップ */
+.pop{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55)}
+.pop-box{width:min(760px,100%);border-radius:28px;padding:clamp(20px,4vw,40px);display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.pop-box.lo{background:var(--lo);color:#fff}
+.pop-box.warn{background:var(--warn);color:var(--on-warn)}
+.pop-box.over{background:var(--over);color:#fff;animation:popflash .9s steps(2) infinite}
+@keyframes popflash{50%{box-shadow:0 0 0 14px #fff,0 20px 60px rgba(0,0,0,.6)}}
+.pop-kind{font-size:clamp(1.8rem,5vw,3.4rem);font-weight:900;line-height:1.1}
+.pop-n{font-family:var(--font-num);font-weight:700;font-size:clamp(6rem,22vw,14rem);line-height:.85}
+.pop-n small{font-family:var(--font-jp);font-size:.25em;font-weight:900;margin-left:.1em}
+.pop-sub{font-size:clamp(1.1rem,2.6vw,1.6rem);font-weight:700}
+.pop-more{font-size:.95rem;font-weight:700;opacity:.85}
+.pop-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:8px;width:100%}
+.pop-actions button{flex:1 1 200px;min-height:60px;border-radius:14px;font-size:1.2rem;font-weight:900;background:rgba(0,0,0,.25);color:inherit}
+.pop-actions button.main{background:#fff;color:#111}
+
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);border-radius:12px;padding:10px 10px 10px 16px;display:flex;align-items:center;gap:12px;font-weight:700;z-index:40;max-width:calc(100% - 32px)}
+.toast button{background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 12px;font-weight:700}
+
+@media (prefers-reduced-motion:reduce){.chip.over,.card.over,.ftile.over,.app.glow-over{animation:none}.app.glow-over{box-shadow:inset 0 0 0 10px var(--over)}}
+@media (max-width:520px){.grid{grid-template-columns:repeat(2,1fr)}.card .name{font-size:2rem}.card .rem{font-size:1.8rem}}
+</style>
+
+<div class="app" id="app">
+  <header>
+    <div class="brand"><b>時間制限管理ツール</b><span id="courseLabel">2時間制</span></div>
+    <div class="tools">
+      <button class="tbtn big" id="farBtn">遠目モード</button>
+      <button class="tbtn" id="soundBtn">音：オフ</button>
+      <button class="tbtn" id="setBtn">設定</button>
+      <button class="tbtn" id="closeBtn" style="border-color:var(--over);color:var(--over)">営業終了</button>
+    </div>
+    <div class="clock num" id="clock">--:--</div>
+  </header>
+  <div class="band" id="band"></div>
+  <div class="summary" id="summary"></div>
+  <div class="grid" id="grid"></div>
+  <p class="note">空いている卓をタップすると今の時刻で登録します。使用中の卓をタップすると時刻の修正・延長・席移動・終了ができます。データはこの端末のブラウザだけに保存されます。</p>
+</div>
+
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet"></div></div>
+<div class="far" id="far" hidden></div>
+<div class="pop" id="pop" hidden></div>
+<div class="toast" id="toast" hidden><span id="toastMsg"></span><button id="toastUndo">取り消す</button></div>
+
+<script>
+(function(){
+const KEY='hg-table-timer-v1';
+const MIN=60000;
+const DEFAULT={tables:['1','2','3','4','5','6','7','8','9','10','11','12','C1','C2','C3','C4'],sessions:{},cfg:{course:120,lo:15,warn:10,dayStart:5,popup:true,store:''},sound:false,turns:{day:'',counts:{}}};
+let S=load();
+function load(){try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);return Object.assign({},DEFAULT,d,{cfg:Object.assign({},DEFAULT.cfg,d.cfg||{}),turns:Object.assign({day:'',counts:{}},d.turns||{})});}}catch(e){}return JSON.parse(JSON.stringify(DEFAULT));}
+
+/* 営業日（切り替え時刻より前は前日扱い）と回転数 */
+function bizDay(now){const d=new Date(now-S.cfg.dayStart*3600000);return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();}
+function ensureDay(){const d=bizDay(Date.now());if(S.turns.day!==d){S.turns={day:d,counts:{}};}}
+const cnt=t=>S.turns.counts[t]||0;
+function roundPill(r){if(!r)return'';return `<span class="round ${r>=3?'r3':r===2?'r2':''}">${r}回転目</span>`;}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
+
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,'0');
+const hm=t=>{const d=new Date(t);return pad(d.getHours())+':'+pad(d.getMinutes());};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function status(s,now){
+  const rem=s.end-now;
+  if(rem<=0)return'over';
+  if(rem<=S.cfg.warn*MIN)return'warn';
+  if(rem<=S.cfg.lo*MIN)return'lo';
+  return'ok';
+}
+function remText(rem){
+  if(rem<=0){const m=Math.floor(-rem/MIN);return m>0?'+'+m+'分 超過':'時間です';}
+  const sec=Math.ceil(rem/1000);
+  if(sec<=15*60)return Math.floor(sec/60)+':'+pad(sec%60);
+  const m=Math.ceil(sec/60);return 'あと '+Math.floor(m/60)+':'+pad(m%60);
+}
+const courseName=m=>m%60===0?(m/60)+'時間制':m>60?Math.floor(m/60)+'時間'+(m%60)+'分制':m+'分制';
+const PRESETS=[60,90,120,150,180];
+const LABEL={lo:'L.O.',warn:'まもなく',over:'退店'};
+
+/* ---------- 音 ---------- */
+let ctx=null;
+function beep(pattern){
+  if(!S.sound)return;
+  try{
+    ctx=ctx||new (window.AudioContext||window.webkitAudioContext)();
+    let t=ctx.currentTime;
+    pattern.forEach(([f,d])=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type='square';o.frequency.value=f;g.gain.setValueAtTime(.18,t);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+d);t+=d+.08;});
+  }catch(e){}
+}
+const SOUNDS={lo:[[880,.2],[880,.2]],warn:[[660,.25],[880,.25],[660,.25]],over:[[1040,.3],[780,.3],[1040,.3],[780,.3]]};
+const prev={};
+
+/* ---------- 描画 ---------- */
+function render(){
+  const now=Date.now();
+  {const d=S.turns.day;ensureDay();if(d!==S.turns.day)save();}
+  $('clock').textContent=hm(now)+':'+pad(new Date(now).getSeconds());
+  $('courseLabel').textContent=(S.cfg.store?S.cfg.store+'　':'')+courseName(S.cfg.course);
+  let worst='ok',used=0;const flags=[];const rank={ok:0,lo:1,warn:2,over:3};
+  const html=S.tables.map(t=>{
+    const s=S.sessions[t];
+    if(!s){prev[t]=null;const c=cnt(t);return `<button class="card empty" data-t="${esc(t)}"><div class="name">${esc(t)}</div>${c?`<div class="count">本日 ${c}組 退店済</div>`:''}<div class="hint">タップで${c+1}回転目を登録</div></button>`;}
+    used++;
+    const st=status(s,now),rem=s.end-now;
+    if(prev[t]&&prev[t]!==st&&rank[st]>rank[prev[t]]){beep(SOUNDS[st]);notify(t,st);}
+    prev[t]=st;
+    const acked=(st==='over'&&s.outAck)||((st==='lo'||st==='warn')&&s.loAck);
+    if(st!=='ok'){flags.push({t,st,rem,acked});if(!acked&&rank[st]>rank[worst])worst=st;}
+    const pct=Math.max(0,Math.min(100,rem/(s.end-s.start)*100));
+    const flag=st!=='ok'?`<span class="flag">${LABEL[st]}</span>`:'';
+    const ack=st==='over'&&s.outAck?'<span class="ack">退店案内済</span>':((st==='lo'||st==='warn')&&s.loAck?'<span class="ack">L.O.済</span>':'');
+    return `<button class="card ${st}" data-t="${esc(t)}">${flag}<div class="name">${esc(t)}</div>${roundPill(s.round||1)}<div class="times"><span class="num">${hm(s.start)}</span>→<span class="num">${hm(s.end)}</span></div>${ack}<div class="rem">${remText(rem)}</div><div class="bar" style="width:${pct}%"></div></button>`;
+  }).join('');
+  $('grid').innerHTML=html;
+  flags.sort((a,b)=>a.rem-b.rem);
+  $('band').innerHTML=flags.filter(f=>!f.acked).map(f=>`<button class="chip ${f.st}" data-t="${esc(f.t)}"><span class="t">${esc(f.t)}</span><span class="l">${LABEL[f.st]}<br>${remText(f.rem)}</span><span class="r">${S.sessions[f.t].round||1}回転目</span></button>`).join('');
+  const total=Object.values(S.turns.counts).reduce((a,b)=>a+b,0);
+  $('summary').innerHTML=`<span>使用中 <b>${used}</b> / ${S.tables.length}卓</span><span>本日の退店組数 <b>${total}</b></span><span>L.O.まで ${S.cfg.lo}分前・黄色 ${S.cfg.warn}分前・赤 0分</span>`;
+  $('app').className='app'+(worst!=='ok'?' glow-'+worst:'');
+  $('soundBtn').textContent='音：'+(S.sound?'オン':'オフ');$('soundBtn').classList.toggle('on',S.sound);
+  if(!$('far').hidden)renderFar(now,flags);
+  if(openT&&!$('scrim').hidden&&sheetMode==='edit')updateSheetTimes();
+}
+
+function renderFar(now,flags){
+  const active=flags.filter(f=>!f.acked);
+  let body;
+  if(active.length){
+    body=`<div class="far-grid">${active.map(f=>`<div class="ftile ${f.st}"><div class="n">${esc(f.t)}</div><div class="r">${S.sessions[f.t].round||1}回転目</div><div class="s">${f.st==='lo'?'ラストオーダー':f.st==='warn'?'残り '+remText(f.rem):'退店時間'+(f.rem<=-MIN?'（'+remText(f.rem)+'）':'')}</div></div>`).join('')}</div>`;
+  }else{
+    const next=S.tables.filter(t=>S.sessions[t]).sort((a,b)=>S.sessions[a].end-S.sessions[b].end)[0];
+    body=`<div class="far-calm"><div class="big">対応が必要な卓はありません</div>${next?`<div class="next">次の退店：<span class="num" style="font-size:1.4em;color:#f4ede5">${esc(next)}</span> 卓　${hm(S.sessions[next].end)}（${remText(S.sessions[next].end-now)}）</div>`:''}</div>`;
+  }
+  $('far').innerHTML=`<div class="far-top"><span class="num">${hm(now)}</span><button class="tbtn" id="farClose">管理画面に戻る</button></div>${body}`;
+}
+
+/* ---------- 操作 ---------- */
+let undoFn=null,toastTimer=null;
+function toast(msg,undo){
+  $('toastMsg').textContent=msg;undoFn=undo;$('toastUndo').hidden=!undo;$('toast').hidden=false;
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('toast').hidden=true;undoFn=null;},6000);
+}
+$('toastUndo').onclick=()=>{if(undoFn){undoFn();save();render();}$('toast').hidden=true;undoFn=null;};
+
+function register(t){
+  const now=Date.now();
+  const start=Math.floor(now/MIN)*MIN;
+  ensureDay();
+  const r=cnt(t)+1;
+  S.sessions[t]={start,end:start+S.cfg.course*MIN,loAck:false,outAck:false,round:r};
+  save();render();
+  toast(`${t}卓 ${r}回転目 ${hm(start)} 入店で登録しました`,()=>{delete S.sessions[t];});
+}
+
+/* ---------- 到達ポップアップ ---------- */
+let popQ=[];
+const POP={lo:{kind:'ラストオーダー',btn:'L.O.済にする'},warn:{kind:'残り'+'10分',btn:'L.O.済にする'},over:{kind:'退店時間です',btn:'退店案内済にする'}};
+function notify(t,st){
+  if(!S.cfg.popup)return;
+  if(openT===t&&!$('scrim').hidden)return;
+  popQ=popQ.filter(p=>p.t!==t);popQ.push({t,st});drawPop();
+}
+function drawPop(){
+  popQ=popQ.filter(p=>S.sessions[p.t]);
+  if(!popQ.length){$('pop').hidden=true;return;}
+  const p=popQ[0],s=S.sessions[p.t];
+  const kind=p.st==='warn'?`残り${S.cfg.warn}分`:POP[p.st].kind;
+  const sub=p.st==='over'?`${hm(s.start)}入店 → ${hm(s.end)} 退店`:`退店 ${hm(s.end)}（${remText(s.end-Date.now())}）`;
+  $('pop').innerHTML=`<div class="pop-box ${p.st}" role="alertdialog" aria-label="${esc(p.t)}卓 ${kind}">
+    <div class="pop-kind">${kind}</div>
+    <div class="pop-n">${esc(p.t)}<small>卓</small></div>
+    <div class="pop-sub">${s.round||1}回転目　${sub}</div>
+    ${popQ.length>1?`<div class="pop-more">ほかに ${popQ.length-1}件 のお知らせがあります</div>`:''}
+    <div class="pop-actions"><button class="main" data-p="ack">${POP[p.st].btn}</button><button data-p="ok">確認した</button></div></div>`;
+  $('pop').hidden=false;
+}
+$('pop').addEventListener('click',e=>{
+  const b=e.target.closest('[data-p]');if(!b)return;
+  const p=popQ.shift();
+  if(b.dataset.p==='ack'&&p&&S.sessions[p.t]){if(p.st==='over')S.sessions[p.t].outAck=true;else S.sessions[p.t].loAck=true;save();}
+  drawPop();render();
+});
+
+function onCard(e){
+  const b=e.target.closest('[data-t]');if(!b)return;
+  const t=b.dataset.t;
+  if(S.sessions[t])openEdit(t);else register(t);
+}
+$('grid').addEventListener('click',onCard);
+$('band').addEventListener('click',e=>{const b=e.target.closest('[data-t]');if(b)openEdit(b.dataset.t);});
+
+/* 編集シート */
+let openT=null,sheetMode=null,armed=false;
+function openEdit(t){openT=t;sheetMode='edit';armed=false;drawEdit();$('scrim').hidden=false;}
+function drawEdit(){
+  const t=openT,s=S.sessions[t];if(!s){closeSheet();return;}
+  const empty=S.tables.filter(x=>!S.sessions[x]);
+  $('sheet').innerHTML=`
+    <h2><span class="num">${esc(t)}</span>卓 ${roundPill(s.round||1)}</h2>
+    <div class="row"><label>回転数（この卓で本日退店した組数＋1）</label>
+      <div class="adj"><button class="sbtn" data-a="r-1">−1</button><span class="val">${s.round||1}<span style="font-size:.5em">組目</span></span><button class="sbtn" data-a="r+1">+1</button></div></div>
+    <div class="row"><label>入店時刻（退店時刻も一緒に動きます）</label>
+      <div class="adj"><button class="sbtn" data-a="s-5">−5分</button><button class="sbtn" data-a="s-1">−1分</button><span class="val" id="vStart"></span><button class="sbtn" data-a="s+1">+1分</button><button class="sbtn" data-a="s+5">+5分</button></div></div>
+    <div class="row"><label>退店時刻（延長・短縮）</label>
+      <div class="adj"><button class="sbtn" data-a="e-5">−5分</button><span class="val" id="vEnd"></span><button class="sbtn" data-a="e+5">+5分</button><button class="sbtn" data-a="e+10">+10分</button><button class="sbtn" data-a="e+30">+30分</button></div>
+      <div class="note" id="vRem"></div></div>
+    <div class="row"><label>この卓の制限時間（入店時刻から計算し直します）</label>
+      <div class="adj">${PRESETS.map(v=>`<button class="sbtn ${Math.round((s.end-s.start)/MIN)===v?'on':''}" data-c="${v}">${v}分</button>`).join('')}</div></div>
+    <div class="row"><label>フラグ</label>
+      <div class="adj"><button class="sbtn wide ${s.loAck?'on':''}" data-a="lo">L.O.済</button><button class="sbtn wide ${s.outAck?'on':''}" data-a="out">退店案内済</button></div>
+      <div class="note">済にすると警告帯と遠目モードから外れます（卓カードの色はそのまま）。</div></div>
+    <div class="row"><label>席移動（空いている卓を選ぶ）</label>
+      ${empty.length?`<div class="moves">${empty.map(x=>`<button class="sbtn" data-m="${esc(x)}">${esc(x)}</button>`).join('')}</div>`:'<div class="note">空いている卓がありません。</div>'}</div>
+    <div class="actions"><button class="sbtn danger wide" data-a="end">会計済・空席にする</button><button class="sbtn primary wide" data-a="close">閉じる</button></div>`;
+  updateSheetTimes();
+}
+function updateSheetTimes(){
+  const s=S.sessions[openT];if(!s||!$('vStart'))return;
+  $('vStart').textContent=hm(s.start);$('vEnd').textContent=hm(s.end);
+  $('vRem').textContent=`滞在 ${Math.round((s.end-s.start)/MIN)}分 ／ ${remText(s.end-Date.now())}`;
+}
+function closeSheet(){$('scrim').hidden=true;openT=null;sheetMode=null;}
+$('scrim').addEventListener('click',e=>{if(e.target===$('scrim'))closeSheet();});
+$('sheet').addEventListener('click',e=>{
+  if(sheetMode==='settings')return onSettings(e);
+  if(sheetMode==='closing')return onClosing(e);
+  const b=e.target.closest('button');if(!b)return;
+  const t=openT,s=S.sessions[t];if(!s)return;
+  if(b.dataset.c){s.end=s.start+parseInt(b.dataset.c,10)*MIN;const st=status(s,Date.now());if(st==='ok'){s.loAck=false;s.outAck=false;}if(st!=='over')s.outAck=false;prev[t]=st;save();drawEdit();render();return;}
+  if(b.dataset.m){
+    const to=b.dataset.m,oldR=s.round;
+    s.round=cnt(to)+1;
+    S.sessions[to]=s;delete S.sessions[t];prev[to]=prev[t];delete prev[t];
+    save();closeSheet();render();toast(`${t}卓 → ${to}卓 に移動しました（${s.round}回転目）`,()=>{s.round=oldR;S.sessions[t]=s;delete S.sessions[to];});return;
+  }
+  const a=b.dataset.a;
+  if(a==='close')return closeSheet();
+  if(a==='end'){
+    if(!armed){armed=true;b.classList.add('armed');b.textContent='もう一度押して空席にする';return;}
+    ensureDay();const keep=s;delete S.sessions[t];S.turns.counts[t]=cnt(t)+1;
+    save();closeSheet();render();toast(`${t}卓 退店（本日${cnt(t)}組目）・空席にしました`,()=>{S.sessions[t]=keep;S.turns.counts[t]=Math.max(0,cnt(t)-1);});return;
+  }
+  if(a==='r-1'||a==='r+1'){const r=Math.max(1,(s.round||1)+(a==='r+1'?1:-1));s.round=r;S.turns.counts[t]=r-1;}
+  else if(a==='lo')s.loAck=!s.loAck;
+  else if(a==='out')s.outAck=!s.outAck;
+  else{const m=parseInt(a.slice(1),10)*MIN;if(a[0]==='s'){s.start+=m;s.end+=m;}else{if(s.end+m>s.start)s.end+=m;}
+    const st=status(s,Date.now());if(st==='ok'){s.loAck=false;s.outAck=false;}if(st!=='over')s.outAck=false;}
+  save();drawEdit();render();
+});
+
+/* 設定 */
+let pendingPopup=true;
+function openSettings(){sheetMode='settings';armed=false;pendingPopup=S.cfg.popup;
+  $('sheet').innerHTML=`<h2>設定</h2>
+  <div class="cfg">
+    <div class="row" style="grid-column:1/-1"><label for="cStore">店舗名（任意・画面左上に表示）</label><input class="field" id="cStore" type="text" value="${esc(S.cfg.store||'')}" placeholder="例：東銀座店"></div>
+    <div class="row" style="grid-column:1/-1"><label for="cCourse">制限時間（新しく登録する卓に使う時間）</label>
+      <div class="adj">${PRESETS.map(v=>`<button class="sbtn ${S.cfg.course===v?'on':''}" data-a="preset" data-v="${v}">${v}分</button>`).join('')}</div>
+      <div class="adj"><input class="field num" id="cCourse" type="number" inputmode="numeric" min="1" value="${S.cfg.course}" style="max-width:140px"><span>分（自由に入力できます）</span></div></div>
+    <div class="row"><label for="cLo">L.O.フラグ（残り何分）</label><input class="field num" id="cLo" type="number" inputmode="numeric" value="${S.cfg.lo}"></div>
+    <div class="row"><label for="cWarn">黄色（残り何分）</label><input class="field num" id="cWarn" type="number" inputmode="numeric" value="${S.cfg.warn}"></div>
+    <div class="row"><label for="cDay">回転数のリセット時刻（時）</label><input class="field num" id="cDay" type="number" inputmode="numeric" min="0" max="23" value="${S.cfg.dayStart}"></div>
+  </div>
+  <div class="row"><label>到達時のポップアップ</label><div class="adj"><button class="sbtn wide ${S.cfg.popup?'on':''}" data-a="popup" id="cPopup">${S.cfg.popup?'表示する':'表示しない'}</button></div></div>
+  <div class="row"><label for="cTables">卓番（カンマか改行で区切る・並び順どおりに表示）</label><textarea class="field" id="cTables">${esc(S.tables.join(', '))}</textarea>
+  <div class="note">使用中の卓を消すと、その卓の記録も消えます。</div></div>
+  <div class="actions"><button class="sbtn danger wide" data-a="resetTurns">回転数を0に戻す</button><button class="sbtn danger wide" data-a="reset">全卓を空席にする</button><button class="sbtn wide" data-a="cancel">キャンセル</button><button class="sbtn primary wide" data-a="save">保存</button></div>`;
+  $('scrim').hidden=false;}
+function onSettings(e){
+  const b=e.target.closest('button');if(!b)return;const a=b.dataset.a;
+  if(a==='cancel')return closeSheet();
+  if(a==='preset'){$('cCourse').value=b.dataset.v;$('sheet').querySelectorAll('[data-a=preset]').forEach(x=>x.classList.toggle('on',x===b));return;}
+  if(a==='popup'){pendingPopup=!pendingPopup;b.classList.toggle('on',pendingPopup);b.textContent=pendingPopup?'表示する':'表示しない';return;}
+  if(a==='resetTurns'){if(b.dataset.armed!=='1'){b.dataset.armed='1';b.classList.add('armed');b.textContent='もう一度押してリセット';return;}
+    const keep=S.turns,rounds={};Object.keys(S.sessions).forEach(k=>{rounds[k]=S.sessions[k].round;});
+    S.turns={day:bizDay(Date.now()),counts:{}};Object.keys(S.sessions).forEach(k=>{S.sessions[k].round=1;});
+    save();closeSheet();render();toast('回転数をリセットしました（使用中の卓は1回転目）',()=>{S.turns=keep;Object.keys(rounds).forEach(k=>{if(S.sessions[k])S.sessions[k].round=rounds[k];});});return;}
+  if(a==='reset'){if(!armed){armed=true;b.classList.add('armed');b.textContent='もう一度押して全卓リセット';return;}
+    const keep=S.sessions;S.sessions={};save();closeSheet();render();toast('全卓を空席にしました',()=>{S.sessions=keep;});return;}
+  if(a==='save'){
+    const n=(id,d)=>{const v=parseInt($(id).value,10);return v>0?v:d;};
+    const ds=parseInt($('cDay').value,10);
+    S.cfg={course:n('cCourse',120),lo:n('cLo',15),warn:n('cWarn',10),dayStart:ds>=0&&ds<=23?ds:5,popup:pendingPopup,store:$('cStore').value.trim()};
+    const list=$('cTables').value.split(/[,、\n]+/).map(x=>x.trim()).filter(Boolean);
+    const uniq=[...new Set(list)];if(uniq.length)S.tables=uniq;
+    Object.keys(S.sessions).forEach(k=>{if(!S.tables.includes(k))delete S.sessions[k];});
+    save();closeSheet();render();toast('設定を保存しました');
+  }
+}
+$('setBtn').onclick=openSettings;
+
+/* 営業終了 */
+function openClosing(){sheetMode='closing';
+  const total=Object.values(S.turns.counts).reduce((a,b)=>a+b,0);
+  const using=S.tables.filter(t=>S.sessions[t]);
+  $('sheet').innerHTML=`<h2>営業終了</h2>
+  <div class="cfg">
+    <div class="row"><label>本日の退店組数</label><span class="val num" style="font-size:2.4rem;font-weight:700">${total}組</span></div>
+    <div class="row"><label>まだ使用中の卓</label><span class="val num" style="font-size:2.4rem;font-weight:700">${using.length}卓</span></div>
+  </div>
+  ${using.length?`<div class="note">使用中：${using.map(esc).join('、')}　（この卓の記録も消えます）</div>`:''}
+  <div class="note">全卓を空席にし、回転数・フラグをすべて0に戻します。卓番・制限時間などの設定は残ります。</div>
+  <div class="actions"><button class="sbtn wide" data-a="cancel">キャンセル</button><button class="sbtn danger armed wide" data-a="close">営業終了してリセット</button></div>`;
+  $('scrim').hidden=false;}
+function onClosing(e){
+  const b=e.target.closest('button');if(!b)return;
+  if(b.dataset.a==='cancel')return closeSheet();
+  if(b.dataset.a==='close'){
+    const keepS=S.sessions,keepT=S.turns;
+    S.sessions={};S.turns={day:bizDay(Date.now()),counts:{}};popQ=[];drawPop();
+    Object.keys(prev).forEach(k=>delete prev[k]);
+    save();closeSheet();render();
+    toast('営業終了しました。全卓リセット済みです',()=>{S.sessions=keepS;S.turns=keepT;Object.keys(keepS).forEach(k=>{prev[k]=status(keepS[k],Date.now());});});
+  }
+}
+$('closeBtn').onclick=openClosing;
+
+/* 音・遠目モード */
+$('soundBtn').onclick=()=>{S.sound=!S.sound;save();if(S.sound)beep([[880,.15]]);render();};
+let wake=null;
+async function keepAwake(){try{if(navigator.wakeLock&&!wake){wake=await navigator.wakeLock.request('screen');wake.addEventListener('release',()=>{wake=null;});}}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')keepAwake();});
+$('farBtn').onclick=()=>{$('far').hidden=false;keepAwake();try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().catch(()=>{});}catch(e){}render();};
+$('far').addEventListener('click',e=>{if(e.target.id==='farClose'){$('far').hidden=true;try{document.fullscreenElement&&document.exitFullscreen();}catch(e){}render();}});
+document.addEventListener('click',keepAwake,{once:true});
+
+/* 初期状態の段階を記録（再読み込み時に鳴らさない） */
+(()=>{const now=Date.now();S.tables.forEach(t=>{if(S.sessions[t])prev[t]=status(S.sessions[t],now);});})();
+render();
+setInterval(render,1000);
+})();
+</script>
+
+<script>
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});
+}
+</script>
+</html>
