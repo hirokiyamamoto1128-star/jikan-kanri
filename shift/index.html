@@ -267,7 +267,9 @@ const DEFAULT_SETTINGS = {
   brk1At: 6, brk1: 0.5, brk2Over: 8, brk2: 1.0,
   otAfter: 8, otRate: 1.25,
   nightFrom: 22, nightTo: 29,
-  peakFrom: 16, peakTo: 23
+  peakFrom: 16, peakTo: 23,
+  targetRate: {1:22,2:22,3:22,4:22,5:22,6:22,0:22},
+  minShift: 4, adjustEmployees: false
 };
 const COLORS = ['yellow','blue','green','teal','pink','red','violet','gray','orange'];
 const WD = ['日','月','火','水','木','金','土'];
@@ -519,6 +521,79 @@ function autoPositions(date,mode){
   const noLead=st.leaderReq?w.filter(p=>Number(d.posIdeal?.[p]||0)>0&&lead[p]===0):[];
   return {n:todo.length-noFit.length,short,noLead,noFit};
 }
+/* ---------- 目標人件費率に合わせた調整 ----------
+ むやみに削らないためのルール：
+ ・時間帯ごとの理想人数を下回るカットはしない（理想人数が入っていない日は調整しない）
+ ・あるポジションの人がその時間に1人もいなくなるカットはしない
+ ・社員は調整しない（設定で変更可）、1回の勤務は最低「最短勤務」時間を残す
+ ・削るのは、理想人数より一番多く人がいる時間帯の、勤務の端（出勤直後か退勤直前）の30分ずつ
+ ・それでも目標に届かなければ、そこで止めて不足額を知らせる */
+const targetRateOf=date=>Number((set().targetRate||{})[wd(date)]??22);
+function slotState(d){
+  const n=Array(48).fill(0),pos=Array.from({length:48},()=>({}));
+  for(const sh of d.shifts||[]){const c=calcShift(sh);if(!c.on)continue;const bs=breakStart(sh,c);
+    for(let k=0;k<48;k++){const t=8+k/2;if(t>=sh.start&&t<sh.end&&!(bs!=null&&t>=bs&&t<bs+c.brk)){n[k]++;if(sh.pos)pos[k][sh.pos]=(pos[k][sh.pos]||0)+1}}}
+  return {n,pos};
+}
+function weekHours(sid,date){return weekDates(monday(date)).reduce((a,dt)=>a+laborOf(dt,sid),0)}
+function hourCover(d){const {n,pos}=slotState(d);return {H:Array.from({length:24},(_,h)=>(n[2*h]+n[2*h+1])/2),pos}}
+function adjustDay(date){
+  const st=set(),d=ensureDay(date),ideal=(d.ideal||[]).map(Number),budget=Number(d.budget)||0,rate=targetRateOf(date);
+  if(!budget)return {ok:false,msg:`${md(date)}：売上予算が入っていないので調整できません`};
+  if(!ideal.some(v=>v>0))return {ok:false,msg:`${md(date)}：時間帯ごとの理想人数が入っていないので調整しません（入れると、人が足りている時間だけを削れます）`};
+  const cap=budget*rate/100;
+  let cost=calcDay(date).cost;
+  if(cost<=cap)return {ok:true,cut:0,msg:`${md(date)}：目標${rate}%（上限${yen(cap)}）に収まっています。調整は不要です`};
+  // 休憩の位置を今の場所で固定してから削る（休憩が混む時間に動かないように）
+  for(const sh of d.shifts){const c=calcShift(sh);if(c.on&&c.brk&&sh.bs==null)sh.bs=breakStart(sh,c)}
+  const before=new Map(d.shifts.map(sh=>[sh,{start:sh.start,end:sh.end}])),log=new Map();
+  for(let guard=0;guard<300&&cost>cap;guard++){
+    const B=hourCover(d);let best=null,bs=-Infinity;
+    for(const sh of d.shifts){const c=calcShift(sh),staff=S.staff[sh.sid];
+      if(!c.on||!staff||(!st.adjustEmployees&&staff.kind==='社員'))continue;
+      if(sh.end-sh.start-0.5<Number(st.minShift||4))continue;
+      for(const edge of ['end','start']){
+        const old=sh[edge],t=edge==='end'?sh.end-0.5:sh.start,h=Math.floor(t-8);
+        sh[edge]=edge==='end'?sh.end-0.5:sh.start+0.5;
+        const A=hourCover(d),nc=calcShift(sh);
+        let ok=true;
+        for(let x=0;x<24&&ok;x++)if(A.H[x]<B.H[x]-1e-9&&A.H[x]<ideal[x]-1e-9)ok=false;
+        for(let k=0;k<48&&ok;k++)for(const [p,v] of Object.entries(B.pos[k]))if(v>=1&&!(A.pos[k][p]>=1)&&posInfo(p)?.kind==='work'){ok=false;break}
+        sh[edge]=old;
+        if(!ok)continue;
+        const surplus=B.H[h]-ideal[h],saved=c.cost-nc.cost;
+        const sc=surplus*100+saved/50+weekHours(sh.sid,date)*0.5+(edge==='end'?1:0);
+        if(sc>bs){bs=sc;best={sh,edge,h,surplus}}}}
+    if(!best)break;
+    const {sh,edge,h}=best;sh[edge]=edge==='end'?sh.end-0.5:sh.start+0.5;
+    const L=log.get(sh)||{hours:new Set()};L.hours.add(h);log.set(sh,L);
+    cost=calcDay(date).cost;
+  }
+  let cut=0;
+  for(const [sh,L] of log){const b=before.get(sh),parts=[];
+    if(sh.start!==b.start)parts.push(`出勤を${tLabel(b.start)}→${tLabel(sh.start)}`);
+    if(sh.end!==b.end)parts.push(`退勤を${tLabel(b.end)}→${tLabel(sh.end)}`);
+    cut+=(b.end-b.start)-(sh.end-sh.start);
+    const hs=[...L.hours].sort((a,b)=>a-b).map(h=>{const H=8+h;return `${H>=24?H-24:H}時台`});
+    sh.why=`目標人件費率${rate}%に合わせて${parts.join('、')}（${hs.join('・')}は理想人数より人が多かったため）`}
+  const left=cost-cap;
+  return {ok:true,cut,msg:`${md(date)}：${log.size}人・計${n1(cut)}時間を調整${left>0?`。理想人数を守るとここまでで、目標まであと${yen(left)}（${(cost/budget*100).toFixed(1)}%）です`:`。人件費率 ${(cost/budget*100).toFixed(1)}%（目標${rate}%）`}`};
+}
+/* 希望（LINEで受けた時間）と確定の違い */
+function reqText(r){if(!r)return '';return r.off?'休み希望':`${tLabel(r.start)}–${tLabel(r.end)}`}
+function diffOf(sh){const r=sh.req;if(!r||!S.staff[sh.sid])return null;
+  const off=isOff(sh.pos)||sh.start==null;
+  if(r.off&&off)return null;
+  if(!r.off&&!off&&r.start===sh.start&&r.end===sh.end)return null;
+  const hr=r.off?0:r.end-r.start,hf=off?0:sh.end-sh.start;
+  return {req:reqText(r),fin:off?'休み':`${tLabel(sh.start)}–${tLabel(sh.end)}`,delta:hf-hr};
+}
+function weekDiffs(){const out=[];for(const dt of weekDates(S.week)){(dayDoc(dt).shifts||[]).forEach((sh,i)=>{const df=diffOf(sh);if(df)out.push({dt,i,sh,...df})})}return out}
+function lineText(){
+  const by={};for(const x of weekDiffs()){(by[x.sh.sid]=by[x.sh.sid]||[]).push(x)}
+  return Object.entries(by).map(([sid,xs])=>`${S.staff[sid].name.replace(/^★/,'')}さん\n`+xs.map(x=>`・${md(x.dt)}（${WD[wd(x.dt)]}）希望 ${x.req} → ${x.fin}${x.sh.memo||x.sh.why?`\n　理由：${x.sh.memo||x.sh.why.replace(/（.*）$/,'')}`:''}`).join('\n')).join('\n\n');
+}
+
 /* 28時間管理：どの連続7日間でも労働時間が上限を超えないか */
 function roll7(sid,end){let h=0;for(let k=0;k<7;k++)h+=laborOf(addDays(end,-k),sid);return h}
 function check28(dates){
@@ -758,7 +833,7 @@ function vShift(){
   const posOpts=sel=>'<option value=""></option>'+st.positions.map(p=>`<option${sel===p.name?' selected':''}>${esc(p.name)}</option>`).join('');
   let head=`<tr><th class="stk">名前</th><th>開始</th><th>終了</th><th>ポジション</th><th title="そのポジションのスキルレベル">Lv</th>`+
     HOURS.map(hh=>`<th class="hr${hh>=st.peakFrom&&hh<st.peakTo?' peak':''}" colspan="2">${hh>=24?hh-24:hh}</th>`).join('')+
-    `<th>勤務</th><th>休憩</th><th>労働</th><th>深夜</th><th></th></tr>`;
+    `<th>勤務</th><th>休憩</th><th>労働</th><th>深夜</th><th title="LINEで受けた希望の時間">希望</th><th></th></tr>`;
   const rows=(d.shifts||[]).map((sh,i)=>{
     const c=C.rows[i], bs=breakStart(sh,c);
     let cells='';
@@ -775,11 +850,12 @@ function vShift(){
       ${cells}
       <td class="v${c.work?' red':''}">${n1(c.work)}</td><td class="v${c.brk?' navy':''}">${n1(c.brk)}</td>
       <td class="v">${n1(c.labor)}</td><td class="v">${n1(c.night)}</td>
+      ${(()=>{const df=diffOf(sh);return sh.req?`<td class="v${df?' red':''}" title="${esc(df?(sh.memo||sh.why||'理由が未入力です'):'希望どおり')}" style="font-family:var(--f-body);font-size:11px">${esc(reqText(sh.req))}${df?` <b>${df.delta>0?'+':''}${n1(df.delta)}h</b>`:''}</td>`:'<td class="v muted" style="font-size:11px">—</td>'})()}
       <td><button class="del" data-act="delRow" data-i="${i}" aria-label="${esc(nm?.name||'')}の行を削除">×</button></td></tr>`}).join('');
   const ideal=d.ideal||Array(24).fill(0);
-  const foot=`<tr><td class="lab stk">実数</td><td colspan="4"></td>${C.perHour.map(v=>`<td colspan="2">${+v.toFixed(1)}</td>`).join('')}<td>${n1(C.work)}</td><td>${n1(C.brk)}</td><td>${n1(C.labor)}</td><td>${n1(C.night)}</td><td></td></tr>
-    <tr><td class="lab stk">理想</td><td colspan="4"></td>${ideal.map((v,i)=>`<td colspan="2"><input type="number" step="0.5" min="0" data-f="ideal" data-h="${i}" value="${v||0}" aria-label="${HOURS[i]}時の理想人数"></td>`).join('')}<td colspan="5"></td></tr>
-    <tr><td class="lab stk">過不足</td><td colspan="4"></td>${C.perHour.map((v,i)=>{const x=+(v-(ideal[i]||0)).toFixed(1);return `<td colspan="2" class="${x<0?'neg':x>0?'pos':''}">${x}</td>`}).join('')}<td colspan="5"></td></tr>`;
+  const foot=`<tr><td class="lab stk">実数</td><td colspan="4"></td>${C.perHour.map(v=>`<td colspan="2">${+v.toFixed(1)}</td>`).join('')}<td>${n1(C.work)}</td><td>${n1(C.brk)}</td><td>${n1(C.labor)}</td><td>${n1(C.night)}</td><td></td><td></td></tr>
+    <tr><td class="lab stk">理想</td><td colspan="4"></td>${ideal.map((v,i)=>`<td colspan="2"><input type="number" step="0.5" min="0" data-f="ideal" data-h="${i}" value="${v||0}" aria-label="${HOURS[i]}時の理想人数"></td>`).join('')}<td colspan="6"></td></tr>
+    <tr><td class="lab stk">過不足</td><td colspan="4"></td>${C.perHour.map((v,i)=>{const x=+(v-(ideal[i]||0)).toFixed(1);return `<td colspan="2" class="${x<0?'neg':x>0?'pos':''}">${x}</td>`}).join('')}<td colspan="6"></td></tr>`;
   const posRows=st.summaryOrder.map(p=>{const n=C.posCount[p]||0,id=Number(d.posIdeal?.[p]||0),x=n-id;
     return `<tr><td><span class="legend"><span style="${posStyle(p)}">${esc(p)}</span></span></td><td class="r num">${n}</td>
     <td class="r num ${x<0?'cell-bad':x>0?'cell-warn':''}">${x}</td>
@@ -803,6 +879,10 @@ function vShift(){
   <section class="panel" aria-label="${md(date)}の集計">
     <div class="bar"><h2>${parse(date).getFullYear()}/${md(date)}（${WD[wd(date)]}）</h2>
       <span class="muted" style="font-size:12px">理想人件費 ${yen(st.idealCost[wd(date)]||0)}／比較 <b class="num ${C.cost-(st.idealCost[wd(date)]||0)>0?'cell-bad':'cell-good'}">${C.cost?yen(C.cost-(st.idealCost[wd(date)]||0)):'—'}</b></span></div>
+    ${(()=>{const tr=targetRateOf(date),cap=C.budget*tr/100,over=C.cost-cap;
+      return `<div class="autobar"><b>目標人件費率 ${tr}%</b>${C.budget?`<span class="num">上限 ${yen(cap)}</span><span class="pill ${over>0?'bad':'good'}">${over>0?`${yen(over)} 超過`:`あと${yen(-over)} 余裕`}</span>`:'<span class="hint">売上予算を入れると上限が出ます</span>'}
+        <button class="btn sm" data-act="adjDay"${C.budget&&over>0?'':' disabled'}>この日を目標に合わせる</button><button class="btn sm" data-act="adjWeek">週全体を目標に合わせる</button>
+        <span class="hint">理想人数を下回らない範囲で、人が多い時間帯の端だけを30分ずつ短くします。社員は変えません。</span></div>`})()}
     <div class="kpis">
       <div class="kpi"><label for="budget">売上予算</label><input id="budget" type="number" step="1000" data-f="budget" value="${d.budget||''}" placeholder="0"></div>
       <div class="kpi hi"><span class="k">人件費</span><span class="v">${yen(C.cost)}</span></div>
@@ -824,6 +904,16 @@ function vShift(){
        <div class="scroll"><table class="grid"><thead>${head}</thead><tfoot>${foot}</tfoot></table></div>`}
     <div class="legend">${st.positions.map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>
   </section>
+  ${(()=>{const xs=weekDiffs();if(!xs.length)return '';
+    return `<section class="panel" aria-label="希望との違い"><div class="bar"><h2>希望との違い（${md(S.week)}〜${md(addDays(S.week,6))}）</h2><span class="pill warn">${xs.length}件</span>
+      <span style="margin-left:auto"><button class="btn sm" data-act="copyDiff">本人に送るLINE文をコピー</button></span></div>
+      <div class="scroll"><table class="t"><thead><tr><th>日付</th><th>名前</th><th>希望</th><th>確定</th><th class="r">差</th><th>理由</th><th></th></tr></thead><tbody>
+      ${xs.map(x=>`<tr><td style="white-space:nowrap">${md(x.dt)}（${WD[wd(x.dt)]}）</td><td style="white-space:nowrap"><b>${esc(S.staff[x.sh.sid].name)}</b></td><td>${esc(x.req)}</td><td>${esc(x.fin)}</td>
+        <td class="num ${x.delta<0?'cell-bad':''}">${x.delta>0?'+':''}${n1(x.delta)}h</td>
+        <td style="min-width:260px">${x.sh.why?`<div style="font-size:12px">${esc(x.sh.why)}</div>`:''}<input type="text" data-dmemo="${x.dt}|${x.i}" value="${esc(x.sh.memo||'')}" placeholder="${x.sh.why?'補足があれば':'理由を入力（例：本人と相談して短縮）'}" style="width:100%"></td>
+        <td style="white-space:nowrap"><button class="btn sm ghost" data-act="toReq" data-k="${x.dt}|${x.i}" title="確定を希望どおりに戻す">希望に戻す</button></td></tr>`).join('')}</tbody></table></div>
+      ${S.copyText?`<textarea readonly rows="6" style="width:100%" id="copyBox">${esc(S.copyText)}</textarea>`:''}
+      <p class="hint">希望はLINEで受けた時間です（行を作って最初に入れた時間が希望になります）。自動調整した行には理由が自動で入ります。手で変えた行は理由を書いておくと、あとで説明しやすくなります。</p></section>`})()}
   <section class="panel" aria-label="ポジション別人数" style="max-width:520px">
     <h2>ポジション別人数</h2>
     <table class="t"><thead><tr><th>ポジション</th><th class="r">実数</th><th class="r">過不足</th><th class="r">理想</th></tr></thead>
@@ -1188,8 +1278,10 @@ function vSettings(){
     <div class="scroll"><table class="t"><thead><tr><th>ポジション</th><th>色</th><th>扱い</th><th></th></tr></thead><tbody>${pos}</tbody></table></div>
     <div><button class="btn sm" data-act="addPos">＋ ポジションを追加</button></div></section>
   <div class="two">
-  <section class="panel"><h2>理想人件費（曜日別）</h2>
-    <table class="t"><tbody>${[1,2,3,4,5,6,0].map(w=>`<tr><td>${WD[w]}</td><td><input type="number" step="1000" id="ic${w}" data-ideal="${w}" value="${st.idealCost[w]||0}"></td></tr>`).join('')}</tbody></table></section>
+  <section class="panel"><h2>目標人件費率・理想人件費（曜日別）</h2>
+    <table class="t"><thead><tr><th>曜日</th><th>目標人件費率（%）</th><th>理想人件費（円）</th></tr></thead><tbody>${[1,2,3,4,5,6,0].map(w=>`<tr><td>${WD[w]}</td><td><input type="number" step="0.5" min="0" max="100" id="tr${w}" data-tr="${w}" value="${(st.targetRate||{})[w]??22}"></td><td><input type="number" step="1000" id="ic${w}" data-ideal="${w}" value="${st.idealCost[w]||0}"></td></tr>`).join('')}</tbody></table>
+    <div class="bar">${num('minShift','調整後も残す最短勤務（h）',0.5)}<label style="font-size:13px"><input type="checkbox" id="adjEmp"${st.adjustEmployees?' checked':''}> 社員も調整の対象にする</label></div>
+    <p class="hint">入力タブの「目標に合わせる」は、売上予算×目標人件費率を上限に、時間帯ごとの理想人数を下回らない範囲でだけ勤務を短くします。</p></section>
   <section class="panel"><h2>計算ルール</h2>
     <div class="kpis">${num('border','社員ボーダー（週h）',0.5)}${num('limit28','28h管理の上限（h）',0.5)}
     ${num('brk1At','休憩1：勤務がこの時間以上',0.5)}${num('brk1','→ 休憩（h）',0.25)}${num('brk2Over','休憩2：勤務がこの時間超',0.5)}${num('brk2','→ 休憩（h）',0.25)}
@@ -1204,6 +1296,9 @@ function ensureDay(date){if(!S.days[date])S.days[date]=JSON.parse(JSON.stringify
 function curDate(){return weekDates(S.week)[S.dayIdx]}
 app.addEventListener('change',e=>{
   const el=e.target, f=el.dataset.f;
+  if(el.dataset.dmemo){const [dt,i]=el.dataset.dmemo.split('|'),d=ensureDay(dt);if(d.shifts[+i]){d.shifts[+i].memo=el.value;saveDay(dt)}return render()}
+  if(el.dataset.tr!=null){S.settings=S.settings||clone(DEFAULT_SETTINGS);S.settings.targetRate={...(S.settings.targetRate||DEFAULT_SETTINGS.targetRate),[el.dataset.tr]:Number(el.value)||0};saveSettings();return render()}
+  if(el.id==='adjEmp'){S.settings=S.settings||clone(DEFAULT_SETTINGS);S.settings.adjustEmployees=el.checked;saveSettings();return render()}
   if(el.dataset.subf){const v=S.draft.days[el.dataset.d];v[el.dataset.subf]=el.value===''?null:Number(el.value);S.draft.dirty=true;return render()}
   if(f){
     if(f==='monthStart'||f==='monthEnd'){S.settings=S.settings||clone(DEFAULT_SETTINGS);S.settings[f]=el.value;saveSettings();return render()}
@@ -1217,8 +1312,11 @@ app.addEventListener('change',e=>{
     else if(f==='ideal')d.ideal[+el.dataset.h]=Number(el.value)||0;
     else if(f==='posIdeal')d.posIdeal[el.dataset.p]=Number(el.value)||0;
     else{const sh=d.shifts[+el.dataset.i];
-      if(f==='sid')sh.sid=el.value; else if(f==='pos'){sh.pos=el.value;if(isOff(sh.pos)){sh.start=null;sh.end=null}}
-      else{sh[f]=el.value===''?null:Number(el.value);sh.bs=null}}
+      if(f==='sid')sh.sid=el.value; else if(f==='pos'){sh.pos=el.value;if(isOff(sh.pos)){sh.start=null;sh.end=null;if(!sh.req&&sh.sid)sh.req={off:true}}}
+      else{sh[f]=el.value===''?null:Number(el.value);sh.bs=null;
+        if(sh.req&&!sh.req.off&&sh.req.start===sh.start&&sh.req.end===sh.end){sh.why='';}
+        else if(sh.req)sh.why=sh.why&&sh.why.startsWith('目標人件費率')?'':sh.why}
+      if(!sh.req&&sh.sid&&sh.start!=null&&sh.end!=null&&sh.end>sh.start)sh.req={start:sh.start,end:sh.end};}
     saveDay(date);return render();
   }
   if(el.dataset.sf){const s=S.staff[el.dataset.id],k=el.dataset.sf;
@@ -1285,16 +1383,26 @@ app.addEventListener('click',e=>{
       r.noFit.length?`できるポジションがない人：${r.noFit.join('、')}（スキルタブで設定してください）。`:''].join(''):'';
     S.undo={date,shifts:before,msg:a==='autoPos'?`${n}人のポジションをスキルに合わせて割り振りました。${extra}`:`${n}人の休憩を、人数に余裕のある時間帯に配置しました。`};
     saveDay(date);return render()}
-  if(a==='undo'&&S.undo){const d=ensureDay(S.undo.date);d.shifts=S.undo.shifts;saveDay(S.undo.date);S.undo=null;toast('元に戻しました');return render()}
+  if(a==='undo'&&S.undo){if(S.undo.multi){for(const [dt,sh] of S.undo.multi){ensureDay(dt).shifts=sh;saveDay(dt)}}else{const d=ensureDay(S.undo.date);d.shifts=S.undo.shifts;saveDay(S.undo.date)}S.undo=null;toast('元に戻しました');return render()}
   if(a==='undoClose'){S.undo=null;return render()}
   if(a==='skill'){const s=S.staff[b.dataset.id],p=b.dataset.p;s.skills=s.skills||[];
     s.skills=s.skills.includes(p)?s.skills.filter(x=>x!==p):s.skills.concat(p);saveStaff(s.id);return render()}
+  if(a==='adjDay'||a==='adjWeek'){const ds=a==='adjDay'?[curDate()]:weekDates(S.week);
+    const before=new Map(ds.map(dt=>[dt,clone(dayDoc(dt).shifts||[])]));const msgs=[];let changed=false;
+    for(const dt of ds){if(!(dayDoc(dt).shifts||[]).length)continue;const r=adjustDay(dt);msgs.push(r.msg);if(r.cut){changed=true;saveDay(dt)}}
+    if(!msgs.length){toast('シフトが入っている日がありません');return}
+    S.undo={date:curDate(),multi:changed?[...before]:null,shifts:before.get(curDate())||clone(dayDoc(curDate()).shifts||[]),msg:msgs.join(' ／ ')};return render()}
+  if(a==='copyDiff'){const t=lineText();S.copyText=t;render();
+    try{navigator.clipboard.writeText(t).then(()=>toast('コピーしました。LINEに貼り付けて送れます'),()=>{const b=document.getElementById('copyBox');b?.select();toast('下の文を選択してコピーしてください')})}catch(_){};return}
+  if(a==='toReq'){const [dt,i]=b.dataset.k.split('|'),d=ensureDay(dt),sh=d.shifts[+i];if(!sh?.req)return;
+    if(sh.req.off){sh.start=null;sh.end=null;sh.pos=offPos()}else{sh.start=sh.req.start;sh.end=sh.req.end;if(isOff(sh.pos))sh.pos=''}
+    sh.why='';saveDay(dt);toast('希望どおりに戻しました');return render()}
   if(a==='copyWeek'){S.confirm='copyWeek';return render()}
   if(a==='clearDay'){S.confirm='clearDay';return render()}
   if(a==='cancel'){S.confirm=null;return render()}
   if(a==='clearDayGo'){const d=ensureDay(curDate());d.shifts=[];S.confirm=null;saveDay(curDate());return render()}
   if(a==='copyWeekGo'){weekDates(S.week).forEach((dt,i)=>{const src=dayDoc(addDays(dt,-7));if(!(src.shifts||[]).length&&!src.budget)return;
-      const d=ensureDay(dt);d.shifts=clone(src.shifts||[]);d.ideal=clone(src.ideal||Array(24).fill(0));d.posIdeal=clone(src.posIdeal||{});if(!d.budget)d.budget=src.budget||0;saveDay(dt)});
+      const d=ensureDay(dt);d.shifts=clone(src.shifts||[]).map(sh=>({...sh,req:isOff(sh.pos)?{off:true}:(sh.start!=null?{start:sh.start,end:sh.end}:undefined),why:'',memo:''}));d.ideal=clone(src.ideal||Array(24).fill(0));d.posIdeal=clone(src.posIdeal||{});if(!d.budget)d.budget=src.budget||0;saveDay(dt)});
     S.confirm=null;toast('前週のシフトをコピーしました');return render()}
   if(a==='addStaff'){const id='s'+Date.now().toString(36);const order=Math.max(0,...Object.values(S.staff).map(s=>s.order||0))+1;
     S.staff[id]={id,name:'新しいスタッフ',kind:'PA',wage:1450,fare:0,paCount:false,limit28:true,active:true,order};saveStaff(id);render();
