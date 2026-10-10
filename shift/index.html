@@ -29,7 +29,7 @@ window.__dbReady=new Promise(function(done){
   --bg:#f5f3ee; --surface:#ffffff; --sunk:#ebe7de; --line:#d6d0c3; --fg:#22201b; --muted:#6b655a;
   --accent:#b8432a; --accent-fg:#ffffff; --ink:#1f3a5c;
   --good:#2f7a4a; --good-bg:#dcefe2; --warn:#a46a00; --warn-bg:#fbedcc; --bad:#b3261e; --bad-bg:#f8dcd8;
-  --brk:#2a2a2a; --cellbg:#fbfaf7;
+  --brk:#2a2a2a; --cellbg:#fbfaf7; --emp-bg:#e3ecf6;
   --p-yellow:#f2d64b; --p-blue:#9ec3ea; --p-green:#a9cf7a; --p-teal:#7fcdd0; --p-pink:#eea7a3; --p-red:#d9483b; --p-violet:#c7a6e6; --p-gray:#c8c3b8; --p-orange:#f1b45a;
   --p-text:#1d1b16;
   --f-body:"BIZ UDPGothic","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
@@ -40,14 +40,14 @@ window.__dbReady=new Promise(function(done){
   --bg:#17161a; --surface:#211f24; --sunk:#2b2930; --line:#3d3a42; --fg:#ece8df; --muted:#a39d92;
   --accent:#e2694c; --accent-fg:#1a0d08; --ink:#9cc0ea;
   --good:#7fd19a; --good-bg:#1f3a28; --warn:#f0c062; --warn-bg:#3d3018; --bad:#ff8f84; --bad-bg:#47201d;
-  --brk:#000000; --cellbg:#1c1b1f;
+  --brk:#000000; --cellbg:#1c1b1f; --emp-bg:#1e2a3a;
   --p-yellow:#c9ae2e; --p-blue:#5f8fc0; --p-green:#7aa652; --p-teal:#4fa3a6; --p-pink:#c47874; --p-red:#c23b2f; --p-violet:#9a7bc0; --p-gray:#77726a; --p-orange:#c88a33;
   --p-text:#111013; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#17161a; --surface:#211f24; --sunk:#2b2930; --line:#3d3a42; --fg:#ece8df; --muted:#a39d92;
   --accent:#e2694c; --accent-fg:#1a0d08; --ink:#9cc0ea;
   --good:#7fd19a; --good-bg:#1f3a28; --warn:#f0c062; --warn-bg:#3d3018; --bad:#ff8f84; --bad-bg:#47201d;
-  --brk:#000000; --cellbg:#1c1b1f;
+  --brk:#000000; --cellbg:#1c1b1f; --emp-bg:#1e2a3a;
   --p-yellow:#c9ae2e; --p-blue:#5f8fc0; --p-green:#7aa652; --p-teal:#4fa3a6; --p-pink:#c47874; --p-red:#c23b2f; --p-violet:#9a7bc0; --p-gray:#77726a; --p-orange:#c88a33;
   --p-text:#111013; color-scheme:dark}
 *{box-sizing:border-box}
@@ -211,6 +211,13 @@ table.wk tr.me td{background:var(--warn-bg)}
 .modal-box{background:var(--surface);color:var(--fg);border-radius:12px;padding:20px;max-width:440px;width:100%;display:grid;gap:12px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
 .modal-box h2{font-size:18px}
 .modal-box p{margin:0;line-height:1.7}
+.grid tr.emp td.stk{background:var(--emp-bg)}
+.grid tr.emp td.stk select.nm{color:var(--ink)}
+.grid tr.sep td{background:var(--sunk);font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;padding:3px 8px;height:auto;text-align:left;font-family:var(--f-body)}
+.grid tr.sep td.stk{background:var(--sunk)}
+table.wk tr.emp td.nm{background:var(--emp-bg);color:var(--ink)}
+table.wk tr.sep td{background:var(--sunk);font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;padding:3px 8px}
+.tagemp{display:inline-block;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:3px;vertical-align:middle;background:var(--ink);color:var(--surface)}
 .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
 .who .role{padding:2px 8px;border-radius:999px;background:var(--sunk)}
 .who .role.mgr{background:var(--accent);color:var(--accent-fg)}
@@ -492,6 +499,11 @@ const PAID='有給';const PAID_COLOR='violet';
 const isOff=name=>name===PAID||posInfo(name)?.kind==='off';
 const isHelp=name=>!!name&&(name==='ヘルプ'||posInfo(name)?.kind==='help');
 const isNew=s=>!!(s&&s.newbie);
+const isEmp=s=>!!(s&&s.kind==='社員');
+// 表示順：社員が上、そのあとアルバイト（名簿の順）
+const staffRank=s=>s?((isEmp(s)?0:100000)+(s.order??999)):999999;
+// アルバイトの休み（出勤しない日）は表に載せない
+const hidePAoff=sh=>{const s=S.staff[sh.sid];return s&&!isEmp(s)&&sh.pos!==PAID&&isOff(sh.pos)};
 const newTag=s=>isNew(s)?'<span class="tagnew" title="新人">新人</span>':'';
 const staffList=(all)=>Object.values(S.staff).filter(s=>all||s.active!==false).sort((a,b)=>(a.order??999)-(b.order??999));
 
@@ -994,14 +1006,20 @@ function vShift(){
   let head=`<tr><th class="stk">名前</th><th>開始</th><th>終了</th><th>ポジション</th><th title="そのポジションのスキルレベル">Lv</th>`+
     HOURS.map(hh=>`<th class="hr${hh>=st.peakFrom&&hh<st.peakTo?' peak':''}" colspan="2">${hh>=24?hh-24:hh}</th>`).join('')+
     `<th>勤務</th><th>休憩</th><th>労働</th><th>深夜</th><th title="LINEで受けた希望の時間">希望</th><th></th></tr>`;
-  const rows=(d.shifts||[]).map((sh,i)=>{
+  const shiftsAll=(d.shifts||[]).map((sh,i)=>({sh,i}));
+  const offPA=shiftsAll.filter(x=>hidePAoff(x.sh));
+  const visible=shiftsAll.filter(x=>S.showOff||!hidePAoff(x.sh)).sort((a,b)=>staffRank(S.staff[a.sh.sid])-staffRank(S.staff[b.sh.sid])||a.i-b.i);
+  let lastGrp=null;
+  const rows=visible.map(({sh,i})=>{
+    const grp=!S.staff[sh.sid]?'未選択':isEmp(S.staff[sh.sid])?'社員':'アルバイト';
+    const sepRow=grp!==lastGrp?`<tr class="sep"><td class="stk">${grp}</td><td colspan="58"></td></tr>`:'';lastGrp=grp;
     const c=C.rows[i], bs=breakStart(sh,c);
     let cells='';
     for(let k=0;k<48;k++){const t=8+k/2;
       const on=c.on&&t>=sh.start&&t<sh.end, br=on&&bs!=null&&t>=bs&&t<bs+c.brk;
       cells+=`<td class="c${k%2===0?' h':''}${on?(br?' brk':' on'):''}" data-act="brk" data-i="${i}" data-t="${t}" title="${tLabel(t)}${on?(br?' 休憩':' — タップで休憩をここへ'):''}"></td>`}
     const nm=S.staff[sh.sid];
-    return `<tr style="${posStyle(sh.pos)}">
+    return sepRow+`<tr style="${posStyle(sh.pos)}" class="${isEmp(nm)?'emp':''}">
       <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${newTag(S.staff[sh.sid])}${sh.sid&&c.on?`<button class="pin${sh.pin?' on':''}" data-act="pin" data-i="${i}" title="${sh.pin?'決め打ち中：自動作成・調整で動かしません（押すと解除）':'押すと決め打ち（自動作成・調整で動かさない）'}">${sh.pin?'固定':'固定する'}</button>`:''}${sh.gen&&!sh.pin?'<span class="subtag" style="background:var(--ink)" title="社員シフトの自動作成で入れた行">自動</span>':''}${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
       ${sh.pos===PAID?`<td colspan="2" style="white-space:nowrap;padding:0 4px"><input type="number" step="0.5" min="0" max="12" data-f="paidH" data-i="${i}" value="${sh.paidH??''}" style="width:64px" aria-label="有給の時間"> h</td>`:
       `<td><select class="t" data-f="start" data-i="${i}" aria-label="開始">${tOptions(sh.start,8,31.5)}</select></td>
@@ -1013,6 +1031,7 @@ function vShift(){
       <td class="v">${n1(c.labor)}</td><td class="v">${n1(c.night)}</td>
       ${(()=>{const df=diffOf(sh);return sh.req?`<td class="v${df?' red':''}" title="${esc(df?(sh.memo||sh.why||'理由が未入力です'):'希望どおり')}" style="font-family:var(--f-body);font-size:11px">${esc(reqText(sh.req))}${df?` <b>${df.delta>0?'+':''}${n1(df.delta)}h</b>`:''}</td>`:'<td class="v muted" style="font-size:11px">—</td>'})()}
       <td><button class="del" data-act="delRow" data-i="${i}" aria-label="${esc(nm?.name||'')}の行を削除">×</button></td></tr>`}).join('');
+  const offLine=offPA.length?`<p class="hint" style="margin:0">休み（アルバイト・表には載せません）：${offPA.map(x=>esc(S.staff[x.sh.sid].name)).join('、')} <button class="btn sm ghost" data-act="toggleOff">${S.showOff?'休みの人を隠す':'休みの人も表示'}</button></p>`:'';
   const ideal=d.ideal||Array(24).fill(0);
   const foot=`<tr><td class="lab stk">実数</td><td colspan="4"></td>${C.perHour.map(v=>`<td colspan="2">${+v.toFixed(1)}</td>`).join('')}<td>${n1(C.work)}</td><td>${n1(C.brk)}</td><td>${n1(C.labor)}</td><td>${n1(C.night)}</td><td></td><td></td></tr>
     <tr><td class="lab stk">理想</td><td colspan="4"></td>${ideal.map((v,i)=>`<td colspan="2"><input type="number" step="0.5" min="0" data-f="ideal" data-h="${i}" value="${v||0}" aria-label="${HOURS[i]}時の理想人数"></td>`).join('')}<td colspan="6"></td></tr>
@@ -1038,6 +1057,7 @@ function vShift(){
     <div class="days">${days}</div>
     ${alert28Html(dates)}
     ${subStatus()}</section>
+  ${shoteiPanel(date)}
   <section class="panel" aria-label="${md(date)}の集計">
     <div class="bar"><h2>${parse(date).getFullYear()}/${md(date)}（${WD[wd(date)]}）</h2>${(()=>{const E=evalPeriod([date]);return E?`<button class="mini" data-act="go" data-t="eval" data-m="day" title="この日の評価を開く">評価 <b>${E.score}</b>点 <span class="grade g-${E.grade}" style="width:20px;height:20px;font-size:12px;border-radius:4px">${E.grade}</span></button>`:''})()}
       <span class="muted" style="font-size:12px">理想人件費 ${yen(st.idealCost[wd(date)]||0)}／比較 <b class="num ${C.cost-(st.idealCost[wd(date)]||0)>0?'cell-bad':'cell-good'}">${C.cost?yen(C.cost-(st.idealCost[wd(date)]||0)):'—'}</b></span></div>
@@ -1065,6 +1085,7 @@ function vShift(){
     ${(d.shifts||[]).length?`<div class="scroll" data-init="${(st.peakFrom-8-2)*32}"><table class="grid"><thead>${head}</thead><tbody>${rows}</tbody><tfoot>${foot}</tfoot></table></div>`:
       `<div class="empty">まだシフトがありません。「＋ 行を追加」で名前・開始・終了・ポジションを選ぶと、勤務・休憩・労働・深夜時間と人件費が自動で計算されます。${staffList().length?'':'<br>先に「マスタ → 名簿」でスタッフを登録してください。'}</div>
        <div class="scroll"><table class="grid"><thead>${head}</thead><tfoot>${foot}</tfoot></table></div>`}
+    ${offLine}
     <div class="legend">${st.positions.map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>
   </section>
   ${(()=>{const xs=weekDiffs();if(!xs.length)return '';
@@ -1103,7 +1124,8 @@ function drawPrint(cv){
   ctx.font=font(22,1);
   for(const p of leg){const tw=ctx.measureText(p.name).width+28;lx-=tw;ctx.fillStyle=PRINT_COL[p.color]||'#eee';ctx.fillRect(lx,M+82,tw-8,36);ctx.fillStyle='#1d1b16';ctx.textAlign='left';ctx.fillText(p.name,lx+10,M+100)}
   // 対象者
-  const ids=staffList(true).filter(s=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(sh=>sh.sid===s.id&&(calcShift(sh).on||isOff(sh.pos)))));
+  const ids=staffList(true).filter(s=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(sh=>sh.sid===s.id&&(calcShift(sh).on||sh.pos===PAID||(isEmp(s)&&isOff(sh.pos)))))).sort((a,b)=>staffRank(a)-staffRank(b));
+  const nEmp=ids.filter(isEmp).length;
   const memos=dates.map(dt=>[dayDoc(dt).note,dayDoc(dt).memo].filter(Boolean).join(' / '));
   const hasMemo=memos.some(Boolean);
   const top=M+160,nameW=270,dayW=(W-2*M-nameW)/7,headH=120,footH=64,memoH=hasMemo?170:0;
@@ -1120,13 +1142,13 @@ function drawPrint(cv){
   ctx.fillStyle='#1d1b16';ctx.font=font(30,1);ctx.textAlign='center';ctx.fillText('名前',M+nameW/2,top+headH/2);
   // 行
   ids.forEach((s,r)=>{const y=top+headH+rowH*r;
-    if(r%2){ctx.fillStyle='#faf8f4';ctx.fillRect(M,y,W-2*M,rowH)}
+    if(isEmp(s)){ctx.fillStyle='#e3ecf6';ctx.fillRect(M,y,nameW,rowH)}else if(r%2){ctx.fillStyle='#faf8f4';ctx.fillRect(M,y,W-2*M,rowH)}
     ctx.fillStyle='#1d1b16';ctx.textAlign='left';const ns=fit(s.name,nameW-28,Math.min(38,rowH*0.42),1);ctx.font=font(ns,1);ctx.fillText(s.name,M+16,y+rowH/2);
     if(isNew(s)){const tw=ctx.measureText(s.name).width,bx=Math.min(M+24+tw,M+nameW-60),bh=Math.min(30,rowH*0.5);ctx.fillStyle='#2f7a4a';ctx.fillRect(bx,y+rowH/2-bh/2,54,bh);ctx.fillStyle='#fff';ctx.font=font(Math.min(20,bh*0.7),1);ctx.fillText('新人',bx+6,y+rowH/2)}
     dates.forEach((dt,i)=>{const sh=(dayDoc(dt).shifts||[]).find(x=>x.sid===s.id);if(!sh)return;
       const cx=X(i),c=calcShift(sh);
       if(sh.pos===PAID){ctx.fillStyle=PRINT_COL.violet;ctx.fillRect(cx+6,y+5,dayW-12,rowH-10);ctx.fillStyle='#1f3a5c';ctx.textAlign='center';ctx.font=font(Math.min(30,rowH*0.38),1);ctx.fillText('有給'+(sh.paidH?` ${n1(sh.paidH)}h`:''),cx+dayW/2,y+rowH/2);return}
-      if(isOff(sh.pos)){ctx.fillStyle='#b3261e';ctx.textAlign='center';ctx.font=font(Math.min(34,rowH*0.4),1);ctx.fillText('休',cx+dayW/2,y+rowH/2);return}
+      if(isOff(sh.pos)){if(!isEmp(s))return;ctx.fillStyle='#b3261e';ctx.textAlign='center';ctx.font=font(Math.min(34,rowH*0.4),1);ctx.fillText('休',cx+dayW/2,y+rowH/2);return}
       if(!c.on)return;
       const p=posInfo(sh.pos);ctx.fillStyle=p?PRINT_COL[p.color]||'#eee':'#f1efe9';ctx.fillRect(cx+6,y+5,dayW-12,rowH-10);
       ctx.fillStyle='#1d1b16';ctx.textAlign='center';
@@ -1149,6 +1171,7 @@ function drawPrint(cv){
   ctx.beginPath();for(let i=0;i<7;i++){ctx.moveTo(X(i),top);ctx.lineTo(X(i),yB)}
   for(const y of [top+headH,yEnd,yEnd+footH]){ctx.moveTo(M,y);ctx.lineTo(W-M,y)}ctx.stroke();
   ctx.strokeStyle='#d6d0c3';ctx.lineWidth=1;ctx.beginPath();for(let r=1;r<ids.length;r++){const y=top+headH+rowH*r;ctx.moveTo(M,y);ctx.lineTo(W-M,y)}ctx.stroke();
+  if(nEmp&&nEmp<ids.length){const y=top+headH+rowH*nEmp;ctx.strokeStyle='#1f3a5c';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(M,y);ctx.lineTo(W-M,y);ctx.stroke()}
   if(!ids.length){ctx.fillStyle='#6b655a';ctx.textAlign='center';ctx.font=font(36);ctx.fillText('この週のシフトはまだありません',W/2,top+headH+80)}
 }
 function jpegPdf(jpeg,w,h){
@@ -1194,14 +1217,16 @@ function vFinal(){
         <span class="hint">月〜日の1週間をA4横1枚にまとめます。印刷画面で「用紙：A4・横」「余白：なし」を選んでください。</span></div>
        <div style="border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;max-width:1100px"><canvas id="printCv" width="2970" height="2100" style="width:100%;height:auto;display:block" aria-label="A4印刷イメージ"></canvas></div>`;
   }else if(mode==='week'){
-    const ids=staffList(true).filter(s=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(sh=>sh.sid===s.id)));
-    const rows=ids.map(s=>`<tr class="${s.id===me?'me':''}"><td class="nm">${esc(s.name)}${newTag(s)}</td>${dates.map(dt=>{
+    const ids=staffList(true).filter(s=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===s.id&&(isEmp(s)||calcShift(x).on||x.pos===PAID)))).sort((a,b)=>staffRank(a)-staffRank(b));
+    let lg=null;
+    const rows=ids.map(s=>{const g=isEmp(s)?'社員':'アルバイト',sep=g!==lg?`<tr class="sep"><td class="nm" style="background:var(--sunk)">${g}</td><td colspan="7"></td></tr>`:'';lg=g;
+      return sep+`<tr class="${s.id===me?'me':''} ${isEmp(s)?'emp':''}"><td class="nm">${esc(s.name)}${newTag(s)}</td>${dates.map(dt=>{
       const sh=(dayDoc(dt).shifts||[]).find(x=>x.sid===s.id);
       if(!sh)return '<td class="sh"></td>';
       if(sh.pos===PAID)return `<td class="off" style="color:var(--ink)">有給${sh.paidH?`<div style="font-weight:400">${n1(sh.paidH)}h</div>`:''}</td>`;
-      if(isOff(sh.pos))return `<td class="off">休</td>`;
+      if(isOff(sh.pos))return isEmp(s)?`<td class="off">休</td>`:'<td class="sh"></td>';
       if(sh.start==null||sh.end==null)return '<td class="sh"></td>';
-      return `<td class="sh" style="${posStyle(sh.pos)}"><div class="tm">${tLabel(sh.start)}–${tLabel(sh.end)}</div>${sh.pos?`<span class="ps">${esc(sh.pos)}${isHelp(sh.pos)&&sh.helpTo?`→${esc(sh.helpTo)}`:''}</span>`:''}</td>`}).join('')}</tr>`).join('');
+      return `<td class="sh" style="${posStyle(sh.pos)}"><div class="tm">${tLabel(sh.start)}–${tLabel(sh.end)}</div>${sh.pos?`<span class="ps">${esc(sh.pos)}${isHelp(sh.pos)&&sh.helpTo?`→${esc(sh.helpTo)}`:''}</span>`:''}</td>`}).join('')}</tr>`}).join('');
     const cnt=dates.map(dt=>(dayDoc(dt).shifts||[]).filter(sh=>calcShift(sh).on).length);
     body=ids.length?`<div class="scroll"><table class="t wk"><thead><tr><th class="nm" style="position:sticky;left:0;z-index:2">名前</th>${dates.map(dt=>{const w=wd(dt),n=dayDoc(dt).note;return `<th><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}${n?`<div style="font-weight:400">${esc(n)}</div>`:''}</th>`}).join('')}</tr></thead>
       <tbody>${rows}</tbody><tfoot><tr><td class="nm">出勤人数</td>${cnt.map(c=>`<td class="num">${c}人</td>`).join('')}</tr></tfoot></table></div>`:
@@ -1209,7 +1234,7 @@ function vFinal(){
   }else{
     const date=dates[S.dayIdx], d=dayDoc(date), C=calcDay(date);
     const on=(d.shifts||[]).map((sh,i)=>({sh,c:C.rows[i]})).filter(r=>r.c.on);
-    const off=(d.shifts||[]).filter(sh=>S.staff[sh.sid]&&isOff(sh.pos));
+    const off=(d.shifts||[]).filter(sh=>S.staff[sh.sid]&&isOff(sh.pos)&&(isEmp(S.staff[sh.sid])||sh.pos===PAID));
     const chips=dates.map((dt,i)=>`<button class="btn sm${i===S.dayIdx?' pri':''}" data-act="day" data-i="${i}">${WD[wd(dt)]} ${md(dt)}</button>`).join('');
     if(!on.length){body=`<div class="bar">${chips}</div><div class="empty">${md(date)}のシフトはまだありません。</div>`}
     else{
@@ -1222,7 +1247,7 @@ function vFinal(){
         if(sh.pos!==last){rows+=`<div class="g-group">${esc(sh.pos||'ポジション未定')}（${on.filter(r=>r.sh.pos===sh.pos).length}人）</div>`;last=sh.pos}
         const bs=breakStart(sh,c);
         rows+=`<div class="g-row${S.me===sh.sid?' me':''}" style="${posStyle(sh.pos)}${S.me===sh.sid?';outline:2px solid var(--accent);border-radius:4px':''}">
-          <div class="g-name">${esc(S.staff[sh.sid].name)}${newTag(S.staff[sh.sid])}</div>
+          <div class="g-name">${esc(S.staff[sh.sid].name)}${isEmp(S.staff[sh.sid])?'<span class="tagemp">社員</span>':''}${newTag(S.staff[sh.sid])}</div>
           <div class="g-track" style="--span:${span}"><div class="g-bar" style="left:${x(sh.start)};width:calc(${x(sh.end)} - ${x(sh.start)})">${tLabel(sh.start)}–${tLabel(sh.end)}</div>
           ${bs!=null?`<div class="g-brk" style="left:${x(bs)};width:calc(${x(bs+c.brk)} - ${x(bs)})" title="休憩 ${tLabel(bs)}–${tLabel(bs+c.brk)}"></div>`:''}</div>
           <div class="g-time">${bs!=null?'休 '+tLabel(bs):''}</div></div>`}
@@ -1365,7 +1390,7 @@ function vHelp(){
     </ol>
     <h3>データについて</h3>
     <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
-    <p class="hint" style="margin:0">バージョン ${'1.2'}</p></section>`;
+    <p class="hint" style="margin:0">バージョン ${'1.3'}</p></section>`;
 }
 
 /* --- 有給 --- */
@@ -1411,7 +1436,7 @@ function vReq(){
     <div style="display:grid;gap:12px;min-width:0">
       <label class="field reqpick"><span>スタッフ</span><select id="reqPick" style="font-size:16px;padding:8px">${groups.map(([g,xs])=>`<optgroup label="${g}">${xs.map(x=>`<option value="${x.id}"${x.id===S.bulk.sid?' selected':''}>${has(x.id)?'✓ ':''}${esc(x.name)}${isNew(x)?'（新人）':''}</option>`).join('')}</optgroup>`).join('')}</select></label>
       ${vBulk(true)}
-      ${alert28Html(dates)}
+      ${isEmp(S.staff[S.bulk.sid])?shoteiPanel(S.week,true):alert28Html(dates)}
     </div></div>`;
 }
 function vBulk(page){
@@ -1539,15 +1564,39 @@ function vWeek(){
     <p class="hint">表示中の週の曜日別人件費 × 期間内のその曜日の日数${mb?`。売上予算で同様に見込むと ${yen(mb)}（人件費率 ${(mt/mb*100).toFixed(1)}%）`:''}</p></section>`;
 }
 
+/* --- 社員の所定労働時間（月） --- */
+function monthOf(date){const d=parse(date);return {y:d.getFullYear(),m:d.getMonth()+1}}
+function empMonth(e,y,m){
+  const pre=`${y}-${pad(m)}`;let plan=0,paid=0,days=0,undecided=0,total=0;
+  for(let d=`${pre}-01`;d.slice(0,7)===pre;d=addDays(d,1)){total++;const r=(dayDoc(d).shifts||[]).find(x=>x.sid===e.id);
+    if(!r){if(d>=today)undecided++;continue}
+    if(r.pos===PAID){paid+=Math.max(0,Number(r.paidH)||0);continue}
+    const c=calcShift(r);if(c.on){plan+=c.labor;days++}}
+  const shotei=Number(e.shotei??173),done=plan+paid,left=shotei-done;
+  return {plan,paid,done,shotei,left,days,undecided,total};
+}
+function shoteiPanel(date,compact){
+  const emps=staffList().filter(isEmp);if(!emps.length)return '';
+  const {y,m}=monthOf(date),wk=weekDates(monday(date));
+  const rows=emps.map(e=>{const r=empMonth(e,y,m),pct=Math.min(100,r.done/(r.shotei||1)*100),wh=wk.reduce((a,dt)=>a+laborOf(dt,e.id),0);
+    const col=r.left<-8?'var(--warn)':r.left<=0?'var(--good)':r.undecided&&r.left/r.undecided<=12?'var(--ink)':'var(--bad)';
+    const note=r.left>0?(r.undecided?`あと${n1(r.left)}h（未定${r.undecided}日・1日あたり${n1(r.left/r.undecided)}h）`:`あと${n1(r.left)}h 不足`):r.left<-0.05?`${n1(-r.left)}h 超過`:'ちょうど';
+    return `<tr><td style="white-space:nowrap"><b>${esc(e.name)}</b></td><td class="num">${n1(wh)}h</td>
+      <td style="min-width:160px"><div class="meter"><i style="width:${pct}%;background:${col}"></i></div></td>
+      <td class="num" style="white-space:nowrap">${n1(r.done)} / ${n1(r.shotei)}h${r.paid?`<div class="muted" style="font-size:11px">有給${n1(r.paid)}h含む</div>`:''}</td><td style="font-size:12px;color:${col};font-weight:700">${note}</td></tr>`}).join('');
+  return `<section class="panel"${compact?' style="padding:10px"':''}><div class="bar"><h2>社員の所定労働時間（${y}年${m}月）</h2><span class="hint">今月の予定（労働＋有給）と所定労働時間の比較。所定は「マスタ → 名簿 → 社員の勤務ルール」で設定</span></div>
+    <div class="scroll"><table class="t"><thead><tr><th>社員</th><th class="r">この週</th><th>今月の進み</th><th class="r">予定 / 所定</th><th>残り</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+
 /* --- 名簿 --- */
 function empRules(){
   const st=set(),emps=staffList().filter(x=>x.kind==='社員');if(!emps.length)return '';
   const posSel=(id,v)=>`<select data-sf="defPos" data-id="${id}" aria-label="基本のポジション"><option value="">（自動配置）</option>${st.positions.filter(p=>p.kind!=='off').map(p=>`<option${v===p.name?' selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
   return `<section class="panel"><div class="bar"><h2>社員の勤務ルール</h2><label class="field" style="margin-left:auto"><span>1日の最低社員数</span><input type="number" min="0" max="10" id="s_minEmp" data-sset="minEmp" value="${st.minEmp??2}" style="width:80px"></label></div>
-    <div class="scroll"><table class="t"><thead><tr><th>社員</th><th class="r">週の出勤日数</th><th>基本の開始</th><th>基本の終了</th><th>基本のポジション</th></tr></thead><tbody>
+    <div class="scroll"><table class="t"><thead><tr><th>社員</th><th class="r">週の出勤日数</th><th>基本の開始</th><th>基本の終了</th><th>基本のポジション</th><th class="r">月の所定労働時間</th></tr></thead><tbody>
     ${emps.map(e=>`<tr><td><b>${esc(e.name)}</b></td><td class="r"><input type="number" min="0" max="7" data-sf="workDays" data-id="${e.id}" value="${e.workDays??5}" style="width:60px" aria-label="週の出勤日数"></td>
-      <td><select data-sf="defStart" data-id="${e.id}" aria-label="基本の開始">${tOptions(Number(e.defStart??12),8,31.5)}</select></td><td><select data-sf="defEnd" data-id="${e.id}" aria-label="基本の終了">${tOptions(Number(e.defEnd??23.5),8.5,32)}</select></td><td>${posSel(e.id,e.defPos||'')}</td></tr>`).join('')}</tbody></table></div>
-    <p class="hint">「シフト作成」の「社員シフトを自動作成」で使います。決め打ち（固定）と休み希望は動かさず、残りの日をこの出勤日数・時間で埋めます。</p></section>`;
+      <td><select data-sf="defStart" data-id="${e.id}" aria-label="基本の開始">${tOptions(Number(e.defStart??12),8,31.5)}</select></td><td><select data-sf="defEnd" data-id="${e.id}" aria-label="基本の終了">${tOptions(Number(e.defEnd??23.5),8.5,32)}</select></td><td>${posSel(e.id,e.defPos||'')}</td><td class="r"><input type="number" min="0" step="0.5" data-sf="shotei" data-id="${e.id}" value="${e.shotei??173}" style="width:80px" aria-label="月の所定労働時間"> h</td></tr>`).join('')}</tbody></table></div>
+    <p class="hint">「シフト作成」の「社員シフトを自動作成」で使います。決め打ち（固定）と休み希望は動かさず、残りの日をこの出勤日数・時間で埋めます。月の所定労働時間（初期値173時間＝週40時間×52週÷12か月）は、シフト作成と希望入力で「今月あと何時間か」を出すのに使います。</p></section>`;
 }
 function vRoster(){
   const dates=weekDates(S.week), list=staffList(true);
@@ -1732,7 +1781,7 @@ app.addEventListener('change',e=>{
     saveDay(date);return render();
   }
   if(el.dataset.sf){const s=S.staff[el.dataset.id],k=el.dataset.sf;
-    if(el.type==='checkbox')s[k]=el.checked; else if(['wage','fare','paidGrant','paidDayH','workDays','defStart','defEnd'].includes(k))s[k]=el.value===''?null:Number(el.value); else s[k]=el.value==='P/A'?'PA':el.value;
+    if(el.type==='checkbox')s[k]=el.checked; else if(['wage','fare','paidGrant','paidDayH','workDays','defStart','defEnd','shotei'].includes(k))s[k]=el.value===''?null:Number(el.value); else s[k]=el.value==='P/A'?'PA':el.value;
     if(k==='kind'&&s.kind==='PA')s.paCount=false;
     saveStaff(s.id);return render()}
   if(el.dataset.pf){S.settings=S.settings||clone(DEFAULT_SETTINGS);const p=S.settings.positions[+el.dataset.i],old=p.name;p[el.dataset.pf]=el.value;
@@ -1775,6 +1824,7 @@ app.addEventListener('click',e=>{
   if(a==='bSaveNext'){if(!bulkSave())return render();const l=staffList().filter(x=>x.kind!=='社員');const all=l.length?l:staffList(),i=all.findIndex(x=>x.id===S.bulk.sid);const nx=all[(i+1)%all.length];S.bulk=bulkInit(nx.id);render();document.getElementById('bulkForm')?.scrollIntoView({block:'start',behavior:'smooth'});return}
   if(a==='go'){if(b.dataset.m)S.evalMode=b.dataset.m;goTab(b.dataset.t);return}
   if(a==='copyOT'){S.otCopy=true;render();const t=S.otText;try{navigator.clipboard.writeText(t).then(()=>toast('コピーしました'),()=>{document.getElementById('otBox')?.select();toast('下の文を選択してコピーしてください')})}catch(_){};return}
+  if(a==='toggleOff'){S.showOff=!S.showOff;return render()}
   if(a==='evMode'){S.evalMode=b.dataset.m;return render()}
   if(a==='evDay'){let i=S.dayIdx+Number(b.dataset.n);if(i<0){S.week=addDays(S.week,-7);i=6}if(i>6){S.week=addDays(S.week,7);i=0}S.dayIdx=i;remember();return render()}
   if(a==='evGo'){const dt=b.dataset.d;S.week=monday(dt);S.dayIdx=(wd(dt)+6)%7;S.evalMode='day';remember();return render()}
