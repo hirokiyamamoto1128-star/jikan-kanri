@@ -1,6 +1,6 @@
 // オフラインでも起動できるようにするためのファイル。
 // ツールを更新したら VERSION の数字を1つ上げてアップし直してください。
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'jikan-kanri-' + VERSION;
 const APP = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
@@ -19,6 +19,8 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // シフト表（shift フォルダ）は別アプリなので、このファイルでは扱わない
+  if (url.origin === location.origin && url.pathname.includes('/shift/')) return;
 
   // 画面本体：ネットにつながっていれば最新版、つながらなければ保存済みの版
   if (req.mode === 'navigate') {

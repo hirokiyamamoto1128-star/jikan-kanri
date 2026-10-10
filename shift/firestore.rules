@@ -1,0 +1,40 @@
+rules_version = '2';
+// シフト表アプリのセキュリティルール
+// ・各店舗のデータは、その店舗の「管理者」か「アルバイト用」アカウントでログインした人だけが読める
+// ・時給と交通費（pay）は管理者だけが読み書きできる
+// ・名簿・設定・店舗名を変えられるのは管理者だけ。シフトと提出はどちらも書ける
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function storeDoc(s) { return get(/databases/$(database)/documents/stores/$(s)).data; }
+    function signedIn() { return request.auth != null; }
+    function isManager(s) { return signedIn() && exists(/databases/$(database)/documents/stores/$(s)) && storeDoc(s).managerUid == request.auth.uid; }
+    function isStaff(s) { return signedIn() && exists(/databases/$(database)/documents/stores/$(s)) && storeDoc(s).staffUid == request.auth.uid; }
+    function isMember(s) { return isManager(s) || isStaff(s); }
+
+    // ログイン用の索引（店舗IDと役割だけ。パスワードは入っていない）
+    match /loginIndex/{bucket} {
+      allow read: if true;
+      allow write: if signedIn()
+        && request.resource.data.keys().hasOnly(['entries'])
+        && request.resource.data.entries is list
+        && request.resource.data.entries.size() < 50;
+    }
+
+    match /stores/{s} {
+      allow read: if isMember(s);
+      allow create: if signedIn()
+        && request.resource.data.managerUid == request.auth.uid
+        && request.resource.data.id == s;
+      allow update: if isManager(s)
+        && request.resource.data.managerUid == resource.data.managerUid
+        && request.resource.data.staffUid == resource.data.staffUid;
+      allow delete: if false;
+
+      match /pay/{id}      { allow read, write: if isManager(s); }
+      match /staff/{id}    { allow read: if isMember(s); allow write: if isManager(s); }
+      match /config/{id}   { allow read: if isMember(s); allow write: if isManager(s); }
+      match /days/{id}     { allow read, write: if isMember(s); }
+      match /requests/{id} { allow read, write: if isMember(s); }
+    }
+  }
+}
