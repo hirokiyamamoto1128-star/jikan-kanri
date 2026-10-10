@@ -5,10 +5,22 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>シフト表</title>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<meta name="theme-color" content="#b8432a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="シフト表">
 <script src="firebase-config.js"></script>
+<script>
+// Firebaseの設定があれば共有版（Firebase）、なければこの端末に保存する版で動く
+window.__dbReady=new Promise(function(done){
+  var c=window.FIREBASE_CONFIG,real=!!(c&&c.apiKey&&!/ここ|YOUR|xxx/i.test(c.apiKey));
+  window.LOCAL_MODE=!real;
+  var v='10.12.2',src=real?['https://www.gstatic.com/firebasejs/'+v+'/firebase-app-compat.js','https://www.gstatic.com/firebasejs/'+v+'/firebase-auth-compat.js','https://www.gstatic.com/firebasejs/'+v+'/firebase-firestore-compat.js']:['local-db.js'];
+  (function next(i){if(i>=src.length)return done();var el=document.createElement('script');el.src=src[i];el.onload=function(){next(i+1)};el.onerror=function(){done()};document.head.appendChild(el)})(0);
+});
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@500;600&family=Dela+Gothic+One&display=swap">
 <style>
@@ -320,6 +332,7 @@ async function createStore(name,id,mpw,spw){
   id=id.trim().toLowerCase();mpw=mpw.trim();spw=spw.trim();
   if(!name)throw '店舗名を入れてください';
   if(!/^[a-z0-9-]{3,30}$/.test(id))throw '店舗IDは半角の英小文字・数字・ハイフンで3〜30文字にしてください';
+  if(window.LOCAL_MODE&&!spw)spw='staff-'+Math.random().toString(36).slice(2)+Date.now().toString(36);
   if(mpw.length<6||spw.length<6)throw 'パスワードは6文字以上にしてください';
   if(mpw===spw)throw '管理者とアルバイト用は別のパスワードにしてください';
   if(await pwInUse(mpw)||await pwInUse(spw))throw 'そのパスワードはほかの店舗で使われています。別のものにしてください';
@@ -379,6 +392,7 @@ function exportBackup(){
   const data={format:'shift-app-backup',version:1,exportedAt:new Date().toISOString(),store:{id:S.store,name:S.stores[S.store]?.name||''},
     staff:Object.values(S.staff),days:S.days,settings:S.settings,requests:S.requests};
   downloadBlob(new Blob([JSON.stringify(data,null,1)],{type:'application/json'}),`backup_${S.store}_${today.replace(/-/g,'')}.json`);
+  try{localStorage.setItem('shiftapp:lastBackup:'+S.store,today)}catch(_){}
 }
 async function importBackup(data){
   if(!data||data.format!=='shift-app-backup')throw 'このアプリのバックアップファイルではありません';
@@ -581,7 +595,7 @@ function status(kind){
   if(!S.db){dot.className='dot err';txt.textContent='未接続';return}
   if(kind==='err'){dot.className='dot err';txt.textContent='保存エラー';return}
   if(kind==='busy'||S.pending.size){dot.className='dot busy';txt.textContent='保存中…';return}
-  dot.className='dot ok';txt.textContent=navigator.onLine===false?'オフライン（つながると自動で保存）':'保存済み';
+  dot.className='dot ok';txt.textContent=window.LOCAL_MODE?'この端末に保存済み':navigator.onLine===false?'オフライン（つながると自動で保存）':'保存済み';
 }
 let toastT;function toast(m){const el=document.getElementById('toast');el.textContent=m;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,3200)}
 
@@ -604,10 +618,13 @@ function render(){
   const sx=window.scrollX,sy=window.scrollY;
   const grid=app.querySelector('.scroll');const gx=grid?grid.scrollLeft:null;
   let h='';
-  if(!S.db){app.innerHTML=S.live===null?'<div class="empty">読み込み中…</div>':`<div class="login panel"><h2>シフト表</h2><div class="banner">${S.cfgMissing?'Firebaseの設定がまだです。firebase-config.js に、Firebaseコンソールの「マイアプリ」に表示される設定をコピーしてください（手順はREADMEにあります）。':'データの保存先に接続できませんでした。通信状況を確認して、ページを開き直してください。'}</div></div>`;status();return}
+  if(!S.db){app.innerHTML=S.live===null?'<div class="empty">読み込み中…</div>':`<div class="login panel"><h2>シフト表</h2><div class="banner">${'アプリを読み込めませんでした。ページを開き直してください。'}</div></div>`;status();return}
   if(!S.role){app.innerHTML=vLogin();status();return}
   if(S.role==='staff'&&!S.me){app.innerHTML=vPickStaff();status();return}
   if(S.role==='staff'&&!['submit','final'].includes(S.tab))S.tab='submit';
+  if(window.LOCAL_MODE&&S.role==='manager'&&Object.keys(S.days).length){let lb='';try{lb=localStorage.getItem('shiftapp:lastBackup:'+S.store)||''}catch(_){}
+    const ago=lb?Math.round((parse(today)-parse(lb))/864e5):null;
+    if(ago==null||ago>=30)h+=`<div class="banner" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">データはこの端末だけに保存されています。${lb?`最後のバックアップから${ago}日たちました。`:'まだバックアップがありません。'}<button class="btn sm" data-act="exportBk">今すぐバックアップ</button></div>`}
   h+=({year:vYear,skill:vSkill,submit:vSubmit,shift:vShift,final:vFinal,week:vWeek,roster:vRoster,emp:vEmp,h28:v28,fare:vFare,settings:vSettings}[S.tab])();
   app.innerHTML=h;
   const cv=document.getElementById('printCv');if(cv)drawPrint(cv);
@@ -633,7 +650,7 @@ function vLogin(){
     <label style="font-size:13px"><input type="checkbox" id="keep" checked> この端末ではログインしたままにする</label>
     <button class="btn pri" type="submit" style="padding:10px"${S.loginBusy?' disabled':''}>${S.loginBusy?'確認中…':'ログイン'}</button>
     ${S.loginErr?`<p class="err" role="alert">${esc(S.loginErr)}</p>`:''}
-    <p class="hint">店長・社員は管理者用、アルバイトの方はアルバイト用のパスワードを入れてください。パスワードは店舗ごとに違います。</p>
+    <p class="hint">${window.LOCAL_MODE?'データはこの端末（このブラウザ）に保存されます。はじめて使うときは、下の「新しい店舗を登録する」から始めてください。':'店長・社員は管理者用、アルバイトの方はアルバイト用のパスワードを入れてください。パスワードは店舗ごとに違います。'}</p>
   </form>
   <details class="login panel"${S.createOpen?' open':''} id="createDet"><summary style="cursor:pointer;font-weight:700">新しい店舗を登録する（初回のみ）</summary>${createStoreForm('cs')}</details>`;
 }
@@ -641,7 +658,7 @@ function createStoreForm(px){return `<form id="${px}Form" style="display:grid;ga
     <label class="field"><span>店舗名</span><input type="text" id="${px}Name" placeholder="例：東銀座店" required></label>
     <label class="field"><span>店舗ID（半角英小文字・数字・ハイフン）</span><input type="text" id="${px}Id" placeholder="例：higashiginza" required autocapitalize="off"></label>
     <label class="field"><span>管理者パスワード（6文字以上）</span><input type="text" id="${px}M" autocomplete="off" required></label>
-    <label class="field"><span>アルバイト用パスワード（6文字以上）</span><input type="text" id="${px}S" autocomplete="off" required></label>
+    ${window.LOCAL_MODE?'':`<label class="field"><span>アルバイト用パスワード（6文字以上）</span><input type="text" id="${px}S" autocomplete="off" required></label>`}
     <button class="btn pri" type="submit"${S.createBusy?' disabled':''}>${S.createBusy?'作成中…':'店舗を作る'}</button>
     ${S.createErr?`<p class="err" role="alert" style="color:var(--bad);font-weight:700;margin:0">${esc(S.createErr)}</p>`:''}
     <p class="hint">店舗IDはあとから変えられません。データは店舗ごとに完全に分かれ、ほかの店舗からは見えません。</p></form>`}
@@ -653,7 +670,7 @@ function vPickStaff(){
 }
 
 /* --- シフト提出（アルバイト） --- */
-const offPos=()=>set().positions.find(p=>p.kind==='off')?.name||'公休1';
+const offPos=()=>{const o=set().positions.filter(p=>p.kind==='off');return (o.find(p=>p.name==='公休1')||o[0])?.name||'公休1'};
 function initDraft(sid,wk){
   const key=sid+'_'+wk, req=S.requests[key], days={};
   for(const dt of weekDates(wk)){
@@ -1158,7 +1175,7 @@ function vSettings(){
       <span class="hint">店舗ID：${esc(S.store)}</span></div>
     <div class="two">
       <div class="field"><span>管理者パスワードを変更</span><input type="password" id="pwMc" placeholder="今のパスワード" autocomplete="current-password"><input type="text" id="pwM" placeholder="新しいパスワード" autocomplete="off"><button class="btn sm" data-act="setPw" data-r="manager">変更</button></div>
-      <div class="field"><span>アルバイト用パスワードを変更</span><input type="password" id="pwSc" placeholder="今のアルバイト用パスワード" autocomplete="off"><input type="text" id="pwS" placeholder="新しいパスワード" autocomplete="off"><button class="btn sm" data-act="setPw" data-r="staff">変更</button></div>
+      ${window.LOCAL_MODE?'':`<div class="field"><span>アルバイト用パスワードを変更</span><input type="password" id="pwSc" placeholder="今のアルバイト用パスワード" autocomplete="off"><input type="text" id="pwS" placeholder="新しいパスワード" autocomplete="off"><button class="btn sm" data-act="setPw" data-r="staff">変更</button></div>`}
     </div>
     <p class="hint">パスワードは6文字以上で、ほかの店舗とは別のものにしてください。変更すると、ほかの端末では次回から新しいパスワードが必要になります。</p>
     <details><summary style="cursor:pointer;font-weight:700;font-size:13px">新しい店舗を追加</summary>${createStoreForm('ns')}</details></section>
@@ -1294,7 +1311,7 @@ app.addEventListener('submit',e=>{
   e.preventDefault();const id=e.target.id;
   if(id==='loginForm'){const pw=document.getElementById('pw').value;document.activeElement?.blur();doLogin(pw,document.getElementById('keep').checked);return}
   if(id==='csForm'||id==='nsForm'){const px=id.slice(0,2),v=k=>document.getElementById(px+k).value;
-    const name=v('Name').trim(),sid=v('Id'),m=v('M'),st=v('S');
+    const name=v('Name').trim(),sid=v('Id'),m=v('M'),st=document.getElementById(px+'S')?.value||'';
     S.createBusy=true;S.createErr='';S.createOpen=true;document.activeElement?.blur();render();
     createStore(name,sid,m,st).then(async()=>{S.createBusy=false;S.createOpen=false;
         if(px==='cs'){toast(`${name}を作りました`);await doLogin(m,true)}else{toast(`${name}を作りました。管理者パスワードでログインし直すと使えます`);render()}},
@@ -1323,9 +1340,12 @@ function remember(){try{localStorage.setItem('shiftapp:view',JSON.stringify({tab
 render();
 try{document.fonts?.ready.then(()=>{if(S.tab==="final"&&S.finalMode==="print")render()})}catch(_){}
 (async()=>{
-  const cfg=window.FIREBASE_CONFIG;
-  if(!window.firebase||!cfg||!cfg.apiKey||/ここ|YOUR|xxx/i.test(cfg.apiKey)){S.live=false;S.cfgMissing=!!window.firebase;render();return}
-  try{firebase.initializeApp(cfg)}catch(e){S.live=false;render();return}
+  await window.__dbReady;
+  if(!window.firebase){S.live=false;render();return}
+  try{firebase.initializeApp(window.LOCAL_MODE?{}:window.FIREBASE_CONFIG)}catch(e){S.live=false;render();return}
+  if(window.LOCAL_MODE){try{navigator.storage?.persist?.()}catch(_){}
+    window.addEventListener('localdb-error',()=>{toast('この端末の保存容量がいっぱいです。設定タブからバックアップを書き出してください');status('err')})}
+  if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
   const db=firebase.firestore();
   try{db.enablePersistence({synchronizeTabs:true}).catch(()=>{})}catch(_){}
   S.db=db;S.live=true;
