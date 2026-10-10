@@ -22,7 +22,7 @@ window.__dbReady=new Promise(function(done){
 });
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@500;600&family=Dela+Gothic+One&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=IBM+Plex+Mono:wght@500;600&family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@300;400&display=swap">
 <style>
 /* Layout: 店のバックヤード用の業務ツール。上部にタブ、各タブは「サマリー → 明細表」の順。表は横スクロール。 */
 :root{
@@ -35,6 +35,7 @@ window.__dbReady=new Promise(function(done){
   --f-body:"BIZ UDPGothic","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
   --f-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",monospace;
   --f-disp:"Dela Gothic One","BIZ UDPGothic",sans-serif;
+  --f-title:"Zen Kaku Gothic New","BIZ UDPGothic",sans-serif;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#17161a; --surface:#211f24; --sunk:#2b2930; --line:#3d3a42; --fg:#ece8df; --muted:#a39d92;
@@ -60,7 +61,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14
 .num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
 header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:30;background:var(--surface);border-bottom:1px solid var(--line)}
 .top-in{display:flex;align-items:center;gap:12px 20px;flex-wrap:wrap;padding:10px 16px 0}
-.brand{font-family:var(--f-body);font-weight:400;font-size:18px;letter-spacing:.02em;color:var(--fg);margin:0}
+.brand{font-family:var(--f-title);font-weight:400;font-size:18px;letter-spacing:.12em;color:var(--fg);margin:0}
 .brand small{font-family:var(--f-body);font-weight:700;font-size:11px;color:var(--muted);margin-left:8px;letter-spacing:.08em}
 .sync{margin-left:auto;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
@@ -231,7 +232,32 @@ table.wk tr.sep td{background:var(--sunk);font-size:11px;font-weight:700;color:v
 .who .role{padding:2px 8px;border-radius:999px;background:var(--sunk)}
 .who .role.mgr{background:var(--accent);color:var(--accent-fg)}
 .login{max-width:420px;margin:32px auto;display:grid;gap:14px}
-.login h2{font-family:var(--f-body);font-weight:400;font-size:22px}
+.login h2{font-family:var(--f-title);font-weight:400;font-size:22px}
+body.out header.top{background:transparent;border-bottom:0}
+body.out .brand{visibility:hidden}
+.gate{max-width:360px;margin:6vh auto 40px;padding:0 4px;display:grid;gap:22px}
+.gate h2{font-family:var(--f-title);font-weight:300;font-size:30px;letter-spacing:.14em;line-height:1.3;margin:0;color:var(--fg)}
+.gate .bar{display:grid;gap:6px}
+.gate .track{display:grid;grid-template-columns:repeat(20,1fr);gap:2px;height:10px}
+.gate .track i{display:block;border-radius:2px;background:var(--sunk)}
+.gate .ticks{display:flex;justify-content:space-between;margin:0 -4px;font-family:var(--f-num);font-size:10px;color:var(--muted)}
+.gate form{display:grid;gap:14px}
+.gate .field span{font-weight:400;letter-spacing:.08em}
+.gate input[type=password],.gate input[type=text]{font-family:var(--f-num);font-size:18px;padding:12px 14px;width:100%;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--fg)}
+.gate input[type=password]:focus,.gate input[type=text]:focus{outline:2px solid var(--ink);outline-offset:1px;border-color:var(--ink)}
+.gate .go{font:inherit;font-family:var(--f-title);font-weight:400;letter-spacing:.2em;font-size:16px;padding:13px;border:0;border-radius:10px;background:var(--ink);color:var(--surface);cursor:pointer}
+.gate .go:hover{filter:brightness(1.12)} .gate .go:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.gate .go:disabled{opacity:.6;cursor:default}
+.gate .keep{accent-color:var(--ink);font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.gate .hint{margin:0;font-size:12px;line-height:1.7}
+.gate .err{color:var(--bad);font-size:13px;margin:0}
+.gate details{border-top:1px solid var(--line);padding-top:14px}
+.gate details summary{cursor:pointer;font-size:13px;color:var(--muted);list-style:none}
+.gate details summary::-webkit-details-marker{display:none}
+.gate details summary::before{content:'＋ '}
+.gate details[open] summary::before{content:'－ '}
+@keyframes fillIn{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.gate .track i.on{transform-origin:left;animation:fillIn .5s cubic-bezier(.2,.7,.2,1) both}
 .login input[type=password],.login input[type=text]{font-family:var(--f-num);font-size:18px;padding:10px 12px;width:100%}
 .login .err{color:var(--bad);font-weight:700;font-size:13px;margin:0}
 .picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
@@ -911,7 +937,7 @@ function render(){
   if(a&&app.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&!['checkbox','radio','file','button'].includes(a.type)))){S.deferRender=true;return}
   S.deferRender=false;
   const tabs=document.getElementById('tabs'), who=document.getElementById('who');
-  tabs.hidden=!S.role||(S.role==='staff'&&!S.me);
+  tabs.hidden=!S.role||(S.role==='staff'&&!S.me);document.body.classList.toggle('out',!S.role);
   const GROUP={eval:'stats',help:'master',week:'stats',year:'stats',h28:'stats',paid:'stats',fare:'stats',emp:'stats',roster:'master',skill:'master',settings:'master'};
   const grp=GROUP[S.tab]||null;
   document.querySelectorAll('#tabs button').forEach(b=>{
@@ -951,15 +977,21 @@ function tOptions(sel,from,to){let o='<option value=""></option>';for(let t=from
 /* --- ログイン --- */
 function vLogin(){
   if(!S.authReady)return '<div class="empty">読み込み中…</div>';
-  return `<form class="login panel" id="loginForm" autocomplete="on">
-    <h2>シフトマネージャーにログイン</h2>
-    <label class="field"><span>パスワード</span><input type="password" id="pw" autocomplete="current-password" required></label>
-    <label style="font-size:13px"><input type="checkbox" id="keep" checked> この端末ではログインしたままにする</label>
-    <button class="btn pri" type="submit" style="padding:10px"${S.loginBusy?' disabled':''}>${S.loginBusy?'確認中…':'ログイン'}</button>
-    ${S.loginErr?`<p class="err" role="alert">${esc(S.loginErr)}</p>`:''}
-    <p class="hint">${window.LOCAL_MODE?'データはこの端末（このブラウザ）に保存されます。はじめて使うときは、下の「新しい店舗を登録する」から始めてください。':'店長・社員は管理者用、アルバイトの方はアルバイト用のパスワードを入れてください。パスワードは店舗ごとに違います。'}</p>
-  </form>
-  <details class="login panel"${S.createOpen?' open':''} id="createDet"><summary style="cursor:pointer;font-weight:700">新しい店舗を登録する（初回のみ）</summary>${createStoreForm('cs')}</details>`;
+  // 1日のシフトを1本の帯に見立てた飾り（10時〜翌6時、1マス1時間）
+  const seg=[['yellow',0,4],['blue',2,9],['green',4,14],['teal',9,18],['pink',12,17],['orange',15,19]];
+  const cols=Array.from({length:20},(_,h)=>{const g=seg.filter(x=>h>=x[1]&&h<x[2]).pop();return g?`<i class="on" style="background:var(--p-${g[0]});animation-delay:${h*25}ms"></i>`:'<i></i>'}).join('');
+  return `<div class="gate">
+    <h2>シフトマネージャー</h2>
+    <div class="bar" aria-hidden="true"><div class="track">${cols}</div><div class="ticks"><span>10</span><span>14</span><span>18</span><span>22</span><span>2</span><span>6</span></div></div>
+    <form id="loginForm" autocomplete="on">
+      <label class="field"><span>パスワード</span><input type="password" id="pw" autocomplete="current-password" required></label>
+      <label class="keep"><input type="checkbox" id="keep" checked> この端末ではログインしたままにする</label>
+      <button class="go" type="submit"${S.loginBusy?' disabled':''}>${S.loginBusy?'確認中…':'ログイン'}</button>
+      ${S.loginErr?`<p class="err" role="alert">${esc(S.loginErr)}</p>`:''}
+      <p class="hint">${window.LOCAL_MODE?'データはこの端末（このブラウザ）に保存されます。はじめて使うときは、下の「新しい店舗を登録する」から始めてください。':'店長・社員は管理者用、アルバイトの方はアルバイト用のパスワードを入れてください。パスワードは店舗ごとに違います。'}</p>
+    </form>
+    <details${S.createOpen?' open':''} id="createDet"><summary>新しい店舗を登録する（初回のみ）</summary>${createStoreForm('cs').replace('class="btn pri"','class="go"')}</details>
+  </div>`;
 }
 function createStoreForm(px){return `<form id="${px}Form" style="display:grid;gap:10px;margin-top:10px">
     <label class="field"><span>店舗名</span><input type="text" id="${px}Name" placeholder="例：東銀座店" required></label>
@@ -1461,7 +1493,7 @@ function vHelp(){
     </ol>
     <h3>データについて</h3>
     <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
-    <p class="hint" style="margin:0">バージョン ${'1.6'}</p></section>`;
+    <p class="hint" style="margin:0">バージョン ${'1.7'}</p></section>`;
 }
 
 /* --- 有給 --- */
