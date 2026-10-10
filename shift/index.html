@@ -136,6 +136,9 @@ table.t td.r,table.t th.r{text-align:right}
 table.t td.num{text-align:right}
 table.t tfoot td{font-weight:700;background:var(--sunk)}
 table.t input{width:100%}
+table.t input[type=checkbox],table.t input[type=radio]{width:auto;margin:0}
+.flags{display:grid;grid-template-columns:auto auto;gap:2px 8px;font-size:12px}
+.flags label{display:flex;align-items:center;gap:4px;white-space:nowrap}
 .pill{display:inline-block;font-size:11px;font-weight:700;border-radius:999px;padding:1px 8px;white-space:nowrap}
 .pill.bad{background:var(--bad-bg);color:var(--bad)} .pill.good{background:var(--good-bg);color:var(--good)} .pill.warn{background:var(--warn-bg);color:var(--warn)}
 .cell-bad{background:var(--bad-bg);color:var(--bad);font-weight:600}
@@ -188,11 +191,18 @@ table.wk tr.me td{background:var(--warn-bg)}
 .reqwrap{display:grid;grid-template-columns:230px minmax(0,1fr);gap:16px;align-items:start}
 .reqlist{display:grid;gap:4px;position:sticky;top:calc(env(safe-area-inset-top,0px) + 110px);max-height:calc(100vh - 140px);overflow:auto}
 .reqlist button{display:flex;align-items:center;gap:6px;text-align:left;font:inherit;font-weight:700;font-size:14px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:6px;padding:7px 10px;cursor:pointer}
-.reqlist button[aria-current="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--sunk)}
-.reqlist .ck{margin-left:auto;font-size:12px;color:var(--good)}
-.reqlist h3{margin:8px 0 2px}
+.reqlist .ck{margin-left:auto;font-size:11px;font-weight:400;color:var(--muted)}
+.reqlist .mk{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;border:1.5px dashed var(--line);font-size:11px;flex:none}
+.reqlist button.done{background:var(--good-bg);border-color:transparent}
+.reqlist button.done .mk{background:var(--good);border:0;color:var(--surface)}
+.reqlist button.done .ck{color:var(--good);font-weight:700}
+.reqlist button[aria-current="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.reqlist h3{margin:8px 0 2px;display:flex;align-items:baseline;gap:8px}
+.reqlist h3 .cnt{font-family:var(--f-num);font-size:12px;color:var(--muted);font-weight:400}
+.linkbtn{border:0;background:none;padding:0;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .reqpick{display:none}
-@media (max-width:760px){.reqwrap{grid-template-columns:1fr}.reqlist{display:none}.reqpick{display:grid}}
+@media (max-width:760px){.reqwrap{grid-template-columns:1fr}.reqlist{position:static;max-height:none;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:5px}.reqlist h3{grid-column:1/-1}.reqlist button{padding:7px 8px;gap:5px;font-size:13px;min-width:0}.reqlist .ck,.reqlist .tag28,.reqlist .tagnew{display:none}}
+.reqlist .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 @media (max-width:480px){nav.tabs{padding-inline:8px}nav.tabs button{padding:8px 8px 10px;font-size:13px}}
 .pin{border:1px solid var(--line);background:var(--surface);color:var(--muted);font:inherit;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:2px;cursor:pointer;vertical-align:middle}
 .pin:not(.on){border-style:dashed;opacity:.55;font-weight:400}
@@ -1074,7 +1084,7 @@ async function submitWeek(){
 
 function subStatus(){
   const list=staffList().filter(s=>s.kind!=='社員');if(!list.length)return '';
-  const dates=weekDates(S.week),has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
+  const dates=weekDates(S.week),has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid&&!x.gen));
   const got=list.filter(s=>has(s.id)||S.requests[s.id+'_'+S.week]);
   const notes=list.map(s=>({s,r:S.requests[s.id+'_'+S.week]})).filter(x=>x.r&&x.r.note);
   return `<details${S.subOpen?' open':''} id="subDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">希望の入力状況 <span class="pill ${got.length===list.length?'good':'warn'}">アルバイト ${got.length}/${list.length}人</span></summary>
@@ -1493,7 +1503,7 @@ function vHelp(){
     </ol>
     <h3>データについて</h3>
     <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
-    <p class="hint" style="margin:0">バージョン ${'1.7'}</p></section>`;
+    <p class="hint" style="margin:0">バージョン ${'1.8'}</p></section>`;
 }
 
 /* --- 有給 --- */
@@ -1517,10 +1527,9 @@ function vPaid(){
 function bulkInit(sid){
   const days={};
   for(const dt of weekDates(S.week)){const row=(dayDoc(dt).shifts||[]).find(x=>x.sid===sid);
-    if(!row)days[dt]={st:''};
+    if(!row||row.gen)days[dt]={st:''};
     else if(row.pos===PAID)days[dt]={st:'paid',h:row.paidH??null};
     else if(isOff(row.pos))days[dt]={st:'off'};
-    else if(row.gen)days[dt]={st:''};
     else if(row.start!=null&&row.end!=null){const r=row.req&&!row.req.off?row.req:row;days[dt]={st:'on',start:r.start,end:r.end,pin:!!row.pin}}
     else days[dt]={st:''}}
   return {sid,week:S.week,days,orig:JSON.stringify(days)};
@@ -1529,15 +1538,17 @@ function vReq(){
   const list=staffList();
   if(!list.length)return `<section class="panel"><h2>希望入力</h2><div class="empty">まずスタッフを登録してください。<br><button class="btn pri" data-act="go" data-t="roster" style="margin-top:10px">名簿を開く</button></div></section>`;
   if(!S.bulk||S.bulk.week!==S.week||!S.staff[S.bulk.sid])S.bulk=bulkInit(S.bulk&&S.staff[S.bulk.sid]?S.bulk.sid:list.find(s=>s.kind!=='社員')?.id||list[0].id);
-  const dates=weekDates(S.week),has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
+  const dates=weekDates(S.week),has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid&&!x.gen));
   const groups=[['アルバイト',list.filter(s=>s.kind!=='社員')],['社員',list.filter(s=>s.kind==='社員')]].filter(g=>g[1].length);
-  const done=list.filter(s=>s.kind!=='社員'&&has(s.id)).length,pa=list.filter(s=>s.kind!=='社員').length;
-  const side=groups.map(([g,xs])=>`<h3>${g}</h3>`+xs.map(x=>`<button data-act="bpick" data-id="${x.id}" aria-current="${x.id===S.bulk.sid}">${esc(x.name)}${x.limit28?'<span class="tag28 near">留</span>':''}${isNew(x)?'<span class="tagnew">新</span>':''}<span class="ck">${has(x.id)?'✓ 入力済':''}</span></button>`).join('')).join('');
-  return `<section class="panel"><div class="bar"><h2>希望入力</h2>${weekNav()}<span class="pill ${done===pa?'good':'warn'}">アルバイト ${done}/${pa}人 入力済み</span></div>
+  const paL=list.filter(s=>s.kind!=='社員'),done=paL.filter(s=>has(s.id)).length,pa=paL.length,todo=paL.filter(s=>!has(s.id));
+  const empL=list.filter(s=>s.kind==='社員'),edone=empL.filter(s=>has(s.id)).length;
+  const side=groups.map(([g,xs])=>`<h3>${g}<span class="cnt">${xs.filter(x=>has(x.id)).length}/${xs.length}</span></h3>`+xs.map(x=>`<button data-act="bpick" data-id="${x.id}" aria-current="${x.id===S.bulk.sid}" class="${has(x.id)?'done':'todo'}"><span class="mk" aria-hidden="true">${has(x.id)?'✓':''}</span><span class="nm">${esc(x.name)}</span>${x.limit28?'<span class="tag28 near">留</span>':''}${isNew(x)?'<span class="tagnew">新</span>':''}<span class="ck">${has(x.id)?'入力済':'未入力'}</span></button>`).join('')).join('');
+  return `<section class="panel"><div class="bar"><h2>希望入力</h2>${weekNav()}<span class="pill ${done===pa?'good':'warn'}">アルバイト ${done}/${pa}人 入力済み</span>${empL.length?`<span class="pill ${edone===empL.length?'good':''}">社員 ${edone}/${empL.length}人</span>`:''}</div>
+    ${todo.length?`<p style="margin:0;font-size:13px"><b>まだのアルバイト：</b>${todo.map(x=>`<button class="linkbtn" data-act="bjump" data-id="${x.id}">${esc(x.name)}</button>`).join('、')}</p>`:pa?'<p style="margin:0;font-size:13px;color:var(--good);font-weight:700">アルバイト全員の希望が入りました</p>':''}
     <p class="hint" style="margin:0">スタッフを選んで、LINEで届いた希望を入れます。「登録して次の人へ」で次々に進めます。入れた内容は「シフト作成」にそのまま入ります。</p></section>
   <div class="reqwrap"><nav class="reqlist panel" aria-label="スタッフ">${side}</nav>
     <div style="display:grid;gap:12px;min-width:0">
-      <label class="field reqpick"><span>スタッフ</span><select id="reqPick" style="font-size:16px;padding:8px">${groups.map(([g,xs])=>`<optgroup label="${g}">${xs.map(x=>`<option value="${x.id}"${x.id===S.bulk.sid?' selected':''}>${has(x.id)?'✓ ':''}${esc(x.name)}${isNew(x)?'（新人）':''}</option>`).join('')}</optgroup>`).join('')}</select></label>
+      <label class="field reqpick" hidden><span>スタッフ</span><select id="reqPick" style="font-size:16px;padding:8px">${groups.map(([g,xs])=>`<optgroup label="${g}">${xs.map(x=>`<option value="${x.id}"${x.id===S.bulk.sid?' selected':''}>${has(x.id)?'✓ ':''}${esc(x.name)}${isNew(x)?'（新人）':''}</option>`).join('')}</optgroup>`).join('')}</select></label>
       ${vBulk(true)}
       ${isEmp(S.staff[S.bulk.sid])?shoteiPanel(S.week,true):alert28Html(dates)}
     </div></div>`;
@@ -1546,14 +1557,14 @@ function vBulk(page){
   const list=staffList();if(!list.length)return '';
   if(!S.bulk||S.bulk.week!==S.week||!S.staff[S.bulk.sid])S.bulk=bulkInit(S.bulk&&S.staff[S.bulk.sid]?S.bulk.sid:list.find(s=>s.kind!=='社員')?.id||list[0].id);
   const B=S.bulk,s=S.staff[B.sid],dates=weekDates(S.week),open=S.bulkOpen!=null?S.bulkOpen:true;
-  const has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
+  const has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid&&!x.gen));
   const ov28=()=>{const o={};for(const [d0,v0] of Object.entries(B.days))o[d0]=v0.st==='on'&&v0.end>v0.start?(v0.end-v0.start)-breakHours(v0.end-v0.start):v0.st==='paid'&&set().paid28?Number(v0.h)||0:0;return o};
   const rows=dates.map(dt=>{const v=B.days[dt]||{st:''},w=wd(dt);
     const emp=s.kind==='社員';
-    const seg=[['on',emp?'出勤（固定）':'出勤'],['off',emp?'休み希望':'休み'],['paid','有給']].map(([k,l])=>`<button class="${k==='on'?'on':k==='off'?'off':''}" data-act="bday" data-d="${dt}" data-v="${k}" aria-pressed="${v.st===k}"${k==='paid'&&v.st==='paid'?' style="background:var(--ink);color:var(--surface)"':''}>${l}</button>`).join('');
+    const seg=[['on',emp?'出勤（固定）':'出勤'],['off',emp?'公休希望':'休み'],['paid','有給']].map(([k,l])=>`<button class="${k==='on'?'on':k==='off'?'off':''}" data-act="bday" data-d="${dt}" data-v="${k}" aria-pressed="${v.st===k}"${k==='paid'&&v.st==='paid'?' style="background:var(--ink);color:var(--surface)"':''}>${l}</button>`).join('');
     const tm=v.st==='on'?`<select data-bf="start" data-d="${dt}" aria-label="${md(dt)}の開始">${tOptions(v.start,8,31.5)}</select><span>〜</span><select data-bf="end" data-d="${dt}" aria-label="${md(dt)}の終了">${tOptions(v.end,8.5,32)}</select>`
       +(emp?'':`<button class="pin${v.pin?' on':''}" data-act="bpin" data-d="${dt}" style="font-size:11px;padding:2px 8px" title="この日は必ず入れる（自動調整で動かさない）">固定</button>`)
-      :v.st==='paid'?`<input type="number" step="0.5" min="0" max="12" data-bf="h" data-d="${dt}" value="${v.h??''}" style="width:70px" aria-label="${md(dt)}の有給時間"> 時間`:v.st===''?`<span class="muted" style="font-size:12px">${emp?'おまかせ（自動作成で決めます）':'未入力'}</span>`:'';
+      :v.st==='paid'?`<input type="number" step="0.5" min="0" max="12" data-bf="h" data-d="${dt}" value="${v.h??''}" style="width:70px" aria-label="${md(dt)}の有給時間"> 時間`:v.st===''?`<span class="muted" style="font-size:12px">${(()=>{const g=(dayDoc(dt).shifts||[]).find(x=>x.sid===B.sid&&x.gen);return g?(isOff(g.pos)?'自動作成：休み':`自動作成：${tLabel(g.start)}–${tLabel(g.end)}`):emp?'おまかせ（自動作成で決めます）':'未入力'})()}</span>`:'';
     const cap=s.limit28?capOn(B.sid,dt,ov28()):null;
     const capTx=cap==null?'':`<span style="font-size:11px;font-weight:700;color:var(--${cap<0?'bad':cap<3?'warn':'muted'})">${cap<0?`28h超過 ${n1(-cap)}h`:`あと${n1(cap)}h`}</span>`;
     return `<div class="sub-day"><div class="dl"><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}</div><div class="seg" role="group" aria-label="${md(dt)}">${seg}</div><div class="tm">${tm}${capTx}</div></div>`}).join('');
@@ -1564,13 +1575,13 @@ function vBulk(page){
   const dirty=JSON.stringify(B.days)!==B.orig;
   return `<section class="panel" id="bulkForm"><div style="display:grid;gap:10px">
     <div class="bar"><h3 style="font-size:16px;color:var(--fg)">${esc(s.name)}</h3>${s.limit28?'<span class="tag28 near">留学生</span>':''}${newTag(s)}
-      <span class="bar" style="margin-left:auto"><button class="btn sm" data-act="bAll" data-v="on">全日出勤</button><button class="btn sm" data-act="bAll" data-v="off">全日休み</button>
+      <span class="bar" style="margin-left:auto">${s.kind==='社員'?'<button class="btn sm" data-act="bAll" data-v="">全日おまかせ</button>':'<button class="btn sm" data-act="bAll" data-v="on">全日出勤</button><button class="btn sm" data-act="bAll" data-v="off">全日休み</button>'}
       <select id="bS" aria-label="まとめて入れる開始">${tOptions(S.bulkT?.[0]??17,8,31.5)}</select>〜<select id="bE" aria-label="まとめて入れる終了">${tOptions(S.bulkT?.[1]??23.5,8.5,32)}</select><button class="btn sm" data-act="bTime">出勤日にこの時間</button></span></div>
     <div>${rows}</div>
     <div class="bar"><span class="muted">労働 ${n1(lab)}h${ph?`・有給 ${n1(ph)}h`:''}</span>
       ${s.limit28?`<span class="pill ${rm.m>lim?'bad':rm.m>lim-3?'warn':'good'}" title="前後の週も含めて、どの連続7日間で見ても${lim}時間以内かを見ています">${rm.m>lim?`7日間で${n1(rm.m)}h（${md(addDays(rm.at,-6))}〜${md(rm.at)}）${n1(rm.m-lim)}h超過`:`どの7日間でも最大${n1(rm.m)}h・あと${n1(lim-rm.m)}h入れられます`}</span>`:''}
       <span style="margin-left:auto" class="bar"><button class="btn" data-act="bSave"${dirty?'':' disabled'}>登録</button><button class="btn pri" data-act="bSaveNext">登録して次の人へ</button></span></div>
-    <p class="hint" style="margin:0">${s.kind==='社員'?'社員は「出勤（固定）」＝決め打ち、「休み希望」＝第2優先。空欄の日は「シフト作成」の「社員シフトを自動作成」で、週の出勤日数に合わせて決まります。':'出勤の時間は「希望」としても記録されます。「固定」を押した日は、28時間や人件費の自動調整でも動かしません。'}</p>
+    <p class="hint" style="margin:0">${s.kind==='社員'?'毎週、届いた公休希望の日に「公休希望」を押して登録してください。「出勤（固定）」＝決め打ち、「公休希望」＝第2優先。何も押していない日は、週の出勤日数に合わせて自動で決まります。すでに社員シフトを自動作成した週は、登録すると希望に合わせて組み直します。':'出勤の時間は「希望」としても記録されます。「固定」を押した日は、28時間や人件費の自動調整でも動かしません。'}</p>
     </div></section>`;
 }
 function bulkSave(){
@@ -1587,7 +1598,9 @@ function bulkSave(){
     else{row.pos=PAID;row.paidH=Number(v.h)||0;row.start=null;row.end=null;delete row.req;row.why=''}
     n++;saveDay(dt)}
   B.orig=JSON.stringify(B.days);
-  toast(n?`${S.staff[B.sid].name}さんの${n}日分を登録しました`:'変更はありません');return true;
+  const regen=n&&S.staff[B.sid]?.kind==='社員'&&weekDates(B.week).some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.gen&&S.staff[x.sid]?.kind==='社員'));
+  if(regen)genEmployees(B.week);
+  toast(n?`${S.staff[B.sid].name}さんの${n}日分を登録しました${regen?'。社員シフトを希望に合わせて組み直しました':''}`:'変更はありません');return true;
 }
 
 /* --- 月間・年間管理 --- */
@@ -1707,7 +1720,7 @@ function vRoster(){
     const hrs=dates.map(dt=>laborOf(dt,s.id)), amt=dates.map(dt=>costOf(dt,s.id));
     const th=hrs.reduce((a,b)=>a+b,0), ta=amt.reduce((a,b)=>a+b,0), fd=dates.filter(dt=>worked(dt,s.id)).length;
     return `<tr${s.active===false?' class="muted"':''}><td class="num">${idx+1}</td>
-      <td><input type="text" data-sf="name" data-id="${s.id}" value="${esc(s.name)}" aria-label="名前" style="min-width:110px"></td>
+      <td><input type="text" data-sf="name" data-id="${s.id}" value="${esc(s.name)}" aria-label="名前" style="min-width:92px"></td>
       <td><select data-sf="kind" data-id="${s.id}" aria-label="区分"><option${s.kind==='社員'?' selected':''}>社員</option><option${s.kind!=='社員'?' selected':''}>P/A</option></select></td>
       <td><input type="number" data-sf="wage" data-id="${s.id}" value="${s.wage??''}" aria-label="時給" style="width:70px"></td>
       <td>${s.kind==='社員'?'<span class="muted">月額</span>':`<input type="number" data-sf="fare" data-id="${s.id}" value="${s.fare??''}" aria-label="往復交通費" style="width:70px">`}</td>
@@ -1715,11 +1728,11 @@ function vRoster(){
       <td class="num"><b>${n1(th)}</b></td>
       <td class="num">${yen(ta)}</td><td class="num">${s.kind==='社員'?'—':yen((s.fare||0)*fd)}</td>
       <td><div class="chips">${workPositions().map(p=>{const L=levelOf(s.id,p);return L>0?`<span class="chip lv${L}" title="${esc(p)}：${esc(lvName(L))}" style="cursor:default">${esc(p.split('/')[0])}${L}</span>`:''}).join('')||'<span class="muted" style="font-size:12px">未設定</span>'}</div></td>
-      <td style="white-space:nowrap">
+      <td><div class="flags">
         <label title="P/A人件費に含める"><input type="checkbox" data-sf="paCount" data-id="${s.id}"${s.kind!=='社員'||s.paCount?' checked':''}${s.kind!=='社員'?' disabled':''}> P/A計上</label>
         <label title="28時間管理の対象"><input type="checkbox" data-sf="limit28" data-id="${s.id}"${s.limit28?' checked':''}> 留学生</label>
         <label title="新人の印を付ける"><input type="checkbox" data-sf="newbie" data-id="${s.id}"${s.newbie?' checked':''}> 新人</label>
-        <label><input type="checkbox" data-sf="active" data-id="${s.id}"${s.active!==false?' checked':''}> 在籍</label>
+        <label><input type="checkbox" data-sf="active" data-id="${s.id}"${s.active!==false?' checked':''}> 在籍</label></div>
         ${s.newbie?`<div style="margin-top:2px;font-size:11px">入社日 <input type="date" data-sf="joinDate" data-id="${s.id}" value="${esc(s.joinDate||'')}" aria-label="入社日" style="font-size:11px"></div>`:''}</td>
       <td style="white-space:nowrap"><button class="btn sm ghost" data-act="mv" data-id="${s.id}" data-n="-1" aria-label="上へ">↑</button><button class="btn sm ghost" data-act="mv" data-id="${s.id}" data-n="1" aria-label="下へ">↓</button></td></tr>`}).join('');
   const tot=dates.map(dt=>calcDay(dt).cost);
@@ -1916,15 +1929,16 @@ app.addEventListener('click',e=>{
   if(a==='pin'){const d=ensureDay(curDate()),sh=d.shifts[+b.dataset.i];if(!sh)return;sh.pin=!sh.pin;if(sh.pin)delete sh.gen;saveDay(curDate());toast(sh.pin?'決め打ちにしました（自動作成・調整で動かしません）':'決め打ちを外しました');return render()}
   if(a==='genEmp'||a==='adj28'){const ds=weekDates(S.week),before=ds.map(dt=>[dt,clone(dayDoc(dt).shifts||[])]);
     const r=a==='genEmp'?genEmployees(S.week):adjust28(S.week);S.undo={date:curDate(),multi:before,shifts:clone(dayDoc(curDate()).shifts||[]),msg:r.msg};return render()}
-  if(a==='bpick'){if(S.bulk&&JSON.stringify(S.bulk.days)!==S.bulk.orig)bulkSave();S.bulk=bulkInit(b.dataset.id);return render()}
+  if(a==='bpick'||a==='bjump'){if(S.bulk&&JSON.stringify(S.bulk.days)!==S.bulk.orig)bulkSave();S.bulk=bulkInit(b.dataset.id);return render()}
   if(a==='bday'){const v=S.bulk.days[b.dataset.d],k=b.dataset.v;
     if(v.st===k)S.bulk.days[b.dataset.d]={st:''};
     else S.bulk.days[b.dataset.d]=k==='on'?{st:'on',start:v.start??(S.staff[S.bulk.sid]?.kind==='社員'?Number(S.staff[S.bulk.sid].defStart??12):S.bulkT?.[0]??17),end:v.end??(S.staff[S.bulk.sid]?.kind==='社員'?Number(S.staff[S.bulk.sid].defEnd??23.5):S.bulkT?.[1]??23.5)}:k==='paid'?{st:'paid',h:Number(S.staff[S.bulk.sid]?.paidDayH)||null}:{st:'off'};return render()}
-  if(a==='bAll'){for(const dt of Object.keys(S.bulk.days)){const v=S.bulk.days[dt];S.bulk.days[dt]=b.dataset.v==='on'?{st:'on',start:v.start??S.bulkT?.[0]??17,end:v.end??S.bulkT?.[1]??23.5}:{st:'off'}}return render()}
+  if(a==='bAll'){for(const dt of Object.keys(S.bulk.days)){const v=S.bulk.days[dt];S.bulk.days[dt]=b.dataset.v==='on'?{st:'on',start:v.start??S.bulkT?.[0]??17,end:v.end??S.bulkT?.[1]??23.5}:b.dataset.v===''?{st:''}:{st:'off'}}return render()}
   if(a==='bTime'){const s0=Number(document.getElementById('bS').value),e0=Number(document.getElementById('bE').value);if(!(e0>s0))return toast('終了は開始より後にしてください');
     S.bulkT=[s0,e0];let n=0;for(const v of Object.values(S.bulk.days))if(v.st==='on'){v.start=s0;v.end=e0;n++}if(!n)toast('先に「出勤」の日を選んでください');return render()}
   if(a==='bSave'){bulkSave();return render()}
-  if(a==='bSaveNext'){if(!bulkSave())return render();const l=staffList().filter(x=>x.kind!=='社員');const all=l.length?l:staffList(),i=all.findIndex(x=>x.id===S.bulk.sid);const nx=all[(i+1)%all.length];S.bulk=bulkInit(nx.id);render();document.getElementById('bulkForm')?.scrollIntoView({block:'start',behavior:'smooth'});return}
+  if(a==='bSaveNext'){if(!bulkSave())return render();const emp0=S.staff[S.bulk.sid]?.kind==='社員',l=staffList().filter(x=>(x.kind==='社員')===emp0);const all=l.length?l:staffList(),i=all.findIndex(x=>x.id===S.bulk.sid),wd7=weekDates(S.week),hasE=sid=>wd7.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid&&!x.gen));
+    let nx=null;for(let k=1;k<=all.length;k++){const c=all[(i+k)%all.length];if(!hasE(c.id)){nx=c;break}}if(!nx){nx=all[(i+1)%all.length];toast(emp0?'社員全員の登録が終わりました':'アルバイト全員の希望が入りました')}S.bulk=bulkInit(nx.id);render();document.getElementById('bulkForm')?.scrollIntoView({block:'start',behavior:'smooth'});return}
   if(a==='go'){if(b.dataset.m)S.evalMode=b.dataset.m;goTab(b.dataset.t);return}
   if(a==='copyOT'){S.otCopy=true;render();const t=S.otText;try{navigator.clipboard.writeText(t).then(()=>toast('コピーしました'),()=>{document.getElementById('otBox')?.select();toast('下の文を選択してコピーしてください')})}catch(_){};return}
   if(a==='toggleOff'){S.showOff=!S.showOff;return render()}
