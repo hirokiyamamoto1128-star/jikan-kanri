@@ -195,6 +195,16 @@ table.wk tr.me td{background:var(--warn-bg)}
 @media (max-width:480px){nav.tabs{padding-inline:8px}nav.tabs button{padding:8px 8px 10px;font-size:13px}}
 .pin{border:1px solid var(--line);background:var(--surface);color:var(--muted);font:inherit;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:2px;cursor:pointer;vertical-align:middle}
 .pin.on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.tagnew{display:inline-block;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:3px;vertical-align:middle;background:var(--good);color:var(--surface)}
+.score{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;align-items:center}
+.score .big{font-size:56px;line-height:1}
+.grade{display:inline-grid;place-items:center;width:52px;height:52px;border-radius:10px;font-family:var(--f-disp);font-size:30px;color:var(--surface)}
+.g-S{background:#7a4fc4}.g-A{background:var(--good)}.g-B{background:var(--ink)}.g-C{background:var(--warn)}.g-D{background:var(--bad)}
+.meter{height:10px;background:var(--sunk);border-radius:5px;overflow:hidden}
+.meter i{display:block;height:100%;border-radius:5px}
+.evtbl td{vertical-align:middle}
+.mini{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:999px;padding:2px 10px;background:var(--surface);color:var(--fg);cursor:pointer}
+.mini b{font-family:var(--f-num)}
 .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
 .who .role{padding:2px 8px;border-radius:999px;background:var(--sunk)}
 .who .role.mgr{background:var(--accent);color:var(--accent-fg)}
@@ -245,6 +255,7 @@ table.wk tr.me td{background:var(--warn-bg)}
     <button role="tab" data-group="master">マスタ</button>
   </nav>
   <nav class="subtabs" id="subtabs" hidden>
+    <button data-tab="eval" data-in="stats">評価</button>
     <button data-tab="week" data-in="stats">週間・月間</button>
     <button data-tab="year" data-in="stats">月間・年間</button>
     <button data-tab="h28" data-in="stats">28時間</button>
@@ -276,7 +287,7 @@ const DEFAULT_SETTINGS = {
     {name:'公休調整', color:'red', kind:'off'},
     {name:'公休1', color:'red', kind:'off'},
     {name:'公休2', color:'red', kind:'off'},
-    {name:'ヘルプ', color:'violet', kind:'free'},
+    {name:'ヘルプ', color:'violet', kind:'help'},
     {name:'ホール兼洗い場', color:'orange', kind:'work'}
   ],
   levelNames: ['できない','見習い','一人前','リーダー'],
@@ -290,7 +301,8 @@ const DEFAULT_SETTINGS = {
   nightFrom: 22, nightTo: 29,
   peakFrom: 16, peakTo: 23,
   targetRate: {1:22,2:22,3:22,4:22,5:22,6:22,0:22},
-  minShift: 4, adjustEmployees: false, paid28: false, minEmp: 2
+  minShift: 4, adjustEmployees: false, paid28: false, minEmp: 2,
+  dailyOT: 8, weeklyOT: 40, nightRate: 0.25
 };
 const COLORS = ['yellow','blue','green','teal','pink','red','violet','gray','orange'];
 const WD = ['日','月','火','水','木','金','土'];
@@ -449,6 +461,9 @@ const set=()=>S.settings||DEFAULT_SETTINGS;
 const posInfo=name=>set().positions.find(p=>p.name===name);
 const PAID='有給';const PAID_COLOR='violet';
 const isOff=name=>name===PAID||posInfo(name)?.kind==='off';
+const isHelp=name=>!!name&&(name==='ヘルプ'||posInfo(name)?.kind==='help');
+const isNew=s=>!!(s&&s.newbie);
+const newTag=s=>isNew(s)?'<span class="tagnew" title="新人">新人</span>':'';
 const staffList=(all)=>Object.values(S.staff).filter(s=>all||s.active!==false).sort((a,b)=>(a.order??999)-(b.order??999));
 
 function breakHours(work){const st=set();if(work>st.brk2Over)return st.brk2;if(work>=st.brk1At)return st.brk1;return 0}
@@ -461,7 +476,7 @@ function calcShift(sh){
   const night=Math.max(0,Math.min(sh.end,st.nightTo)-Math.max(sh.start,st.nightFrom));
   const wage=Number(staff.wage)||0;
   const cost=wage*Math.min(labor,st.otAfter)+wage*st.otRate*Math.max(0,labor-st.otAfter);
-  return {work,brk,labor,night,cost,on:true};
+  return {work,brk,labor,night,cost,on:true,help:isHelp(sh.pos)};
 }
 function breakStart(sh,c){
   if(!c.brk)return null;
@@ -472,7 +487,7 @@ function breakStart(sh,c){
 function dayDoc(date){return S.days[date]||{budget:0,note:'',memo:'',ideal:Array(24).fill(0),posIdeal:{},shifts:[]}}
 function calcDay(date){
   const d=dayDoc(date);
-  let cost=0,pa=0,labor=0,work=0,brk=0,night=0,paid=0;
+  let cost=0,pa=0,labor=0,work=0,brk=0,night=0,paid=0,helpH=0,helpCost=0;const helpRows=[];
   const perHour=Array(24).fill(0), posCount={}, rows=[];
   for(const sh of d.shifts||[]){
     const c=calcShift(sh); rows.push(c);
@@ -480,6 +495,7 @@ function calcDay(date){
     if(sh.pos&&!isOff(sh.pos))posCount[sh.pos]=(posCount[sh.pos]||0)+1;
     if(c.paid!=null){cost+=c.cost;paid+=c.paid;if(S.staff[sh.sid].kind!=='社員'||S.staff[sh.sid].paCount)pa+=c.cost}
     if(!c.on)continue;
+    if(c.help){helpH+=c.labor;helpCost+=c.cost;helpRows.push({sh,c});continue} // ヘルプ（他店へ）は自店の人件費・人員に含めない
     cost+=c.cost; labor+=c.labor; work+=c.work; brk+=c.brk; night+=c.night;
     if(S.staff[sh.sid].kind!=='社員'||S.staff[sh.sid].paCount)pa+=c.cost;
     const bs=breakStart(sh,c);
@@ -487,7 +503,7 @@ function calcDay(date){
       if(t>=sh.start&&t<sh.end&&!(bs!=null&&t>=bs&&t<bs+c.brk))perHour[Math.floor(k/2)]+=0.5;}
   }
   const budget=Number(d.budget)||0;
-  return {d,rows,cost,pa,labor,work,brk,night,paid,perHour,posCount,budget,
+  return {d,rows,cost,pa,labor,work,brk,night,paid,helpH,helpCost,helpRows,perHour,posCount,budget,
     rate:budget?cost/budget:null, paRate:budget?pa/budget:null, prod:labor?budget/labor:null};
 }
 function laborOf(date,sid){let h=0;for(const sh of dayDoc(date).shifts||[])if(sh.sid===sid)h+=calcShift(sh).labor;return h}
@@ -520,7 +536,7 @@ function autoPositions(date,mode){
   const st=set(),d=ensureDay(date),w=workPositions(),hist=posHistory(date),need={},lead={},solid={};
   w.forEach(p=>{need[p]=Number(d.posIdeal?.[p]||0);lead[p]=0;solid[p]=0});
   const rows=d.shifts.filter(sh=>S.staff[sh.sid]&&sh.start!=null&&sh.end!=null&&sh.end>sh.start&&!isOff(sh.pos));
-  const keep=sh=>posInfo(sh.pos)?.kind==='free'||(mode==='blank'&&sh.pos);
+  const keep=sh=>posInfo(sh.pos)?.kind==='free'||isHelp(sh.pos)||(mode==='blank'&&sh.pos);
   const lv=(sid,p)=>{const L=levelOf(sid,p);return L==null?((hist[sid]||{})[p]?2:1):L};
   const put=(sh,p)=>{if(need[p]!=null){need[p]--;const L=lv(sh.sid,p);if(L>=3)lead[p]++;if(L>=2)solid[p]++}};
   rows.filter(keep).forEach(sh=>put(sh,sh.pos));
@@ -536,7 +552,8 @@ function autoPositions(date,mode){
   for(;;){let best=null,bs=-Infinity;
     for(const sh of free())for(const p of w){if(need[p]<=0)continue;const L=lv(sh.sid,p);if(L<1)continue;
       const h=Math.min((hist[sh.sid]||{})[p]||0,9);
-      const sc=need[p]*100+L*20+(L===1?(solid[p]>0?0:-30):0)+h-okCount(sh.sid)*3+len(sh)*0.5;
+      const nb=isNew(S.staff[sh.sid]);
+      const sc=need[p]*100+L*20+((L===1||nb)?(solid[p]>0?0:-30):0)+h-okCount(sh.sid)*3+len(sh)*0.5;
       if(sc>bs){bs=sc;best=[sh,p]}}
     if(!best)break;best[0].pos=best[1];put(best[0],best[1])}
   const noFit=[];
@@ -556,6 +573,7 @@ function autoPositions(date,mode){
  ・それでも目標に届かなければ、そこで止めて不足額を知らせる */
 const targetRateOf=date=>Number((set().targetRate||{})[wd(date)]??22);
 function slotState(d){
+  d={...d,shifts:(d.shifts||[]).filter(x=>!isHelp(x.pos))};
   const n=Array(48).fill(0),pos=Array.from({length:48},()=>({}));
   for(const sh of d.shifts||[]){const c=calcShift(sh);if(!c.on)continue;const bs=breakStart(sh,c);
     for(let k=0;k<48;k++){const t=8+k/2;if(t>=sh.start&&t<sh.end&&!(bs!=null&&t>=bs&&t<bs+c.brk)){n[k]++;if(sh.pos)pos[k][sh.pos]=(pos[k][sh.pos]||0)+1}}}
@@ -576,7 +594,7 @@ function adjustDay(date){
   for(let guard=0;guard<300&&cost>cap;guard++){
     const B=hourCover(d);let best=null,bs=-Infinity;
     for(const sh of d.shifts){const c=calcShift(sh),staff=S.staff[sh.sid];
-      if(!c.on||!staff||sh.pin||(!st.adjustEmployees&&staff.kind==='社員'))continue;
+      if(!c.on||c.help||!staff||sh.pin||(!st.adjustEmployees&&staff.kind==='社員'))continue;
       if(sh.end-sh.start-0.5<Number(st.minShift||4))continue;
       for(const edge of ['end','start']){
         const old=sh[edge],t=edge==='end'?sh.end-0.5:sh.start,h=Math.floor(t-8);
@@ -714,7 +732,7 @@ function alert28Html(dates){
 // 休憩：理想人数に対して人が一番余っている時間帯に入れる。同じポジションの休憩はなるべく重ねない。
 function autoBreaks(date){
   const d=ensureDay(date),ideal=d.ideal||Array(24).fill(0),cov=Array(48).fill(0),posBrk={};
-  const rows=d.shifts.map(sh=>({sh,c:calcShift(sh)})).filter(r=>r.c.on);
+  const rows=d.shifts.map(sh=>({sh,c:calcShift(sh)})).filter(r=>r.c.on&&!r.c.help);
   rows.forEach(({sh})=>{for(let k=0;k<48;k++){const t=8+k/2;if(t>=sh.start&&t<sh.end)cov[k]++}});
   let n=0;
   rows.filter(r=>r.c.brk).sort((a,b)=>a.sh.start-b.sh.start).forEach(({sh,c})=>{
@@ -788,11 +806,11 @@ let toastT;function toast(m){const el=document.getElementById('toast');el.textCo
 const app=document.getElementById('app');
 function render(){
   const a=document.activeElement;
-  if(a&&app.contains(a)&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')){S.deferRender=true;return}
+  if(a&&app.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&!['checkbox','radio','file','button'].includes(a.type)))){S.deferRender=true;return}
   S.deferRender=false;
   const tabs=document.getElementById('tabs'), who=document.getElementById('who');
   tabs.hidden=!S.role||(S.role==='staff'&&!S.me);
-  const GROUP={help:'master',week:'stats',year:'stats',h28:'stats',paid:'stats',fare:'stats',emp:'stats',roster:'master',skill:'master',settings:'master'};
+  const GROUP={eval:'stats',help:'master',week:'stats',year:'stats',h28:'stats',paid:'stats',fare:'stats',emp:'stats',roster:'master',skill:'master',settings:'master'};
   const grp=GROUP[S.tab]||null;
   document.querySelectorAll('#tabs button').forEach(b=>{
     b.hidden=S.role==='staff'?!['submit','final'].includes(b.dataset.tab):b.dataset.role==='staff';
@@ -814,7 +832,7 @@ function render(){
   if(window.LOCAL_MODE&&S.role==='manager'&&Object.keys(S.days).length){let lb='';try{lb=localStorage.getItem('shiftapp:lastBackup:'+S.store)||''}catch(_){}
     const ago=lb?Math.round((parse(today)-parse(lb))/864e5):null;
     if(ago==null||ago>=30)h+=`<div class="banner" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">データはこの端末だけに保存されています。${lb?`最後のバックアップから${ago}日たちました。`:'まだバックアップがありません。'}<button class="btn sm" data-act="exportBk">今すぐバックアップ</button></div>`}
-  h+=({help:vHelp,req:vReq,paid:vPaid,year:vYear,skill:vSkill,submit:vSubmit,shift:vShift,final:vFinal,week:vWeek,roster:vRoster,emp:vEmp,h28:v28,fare:vFare,settings:vSettings}[S.tab])();
+  h+=({eval:vEval,help:vHelp,req:vReq,paid:vPaid,year:vYear,skill:vSkill,submit:vSubmit,shift:vShift,final:vFinal,week:vWeek,roster:vRoster,emp:vEmp,h28:v28,fare:vFare,settings:vSettings}[S.tab])();
   app.innerHTML=h;
   const cv=document.getElementById('printCv');if(cv)drawPrint(cv);
   const g2=app.querySelector('.scroll'); if(g2&&gx!=null)g2.scrollLeft=gx; else if(g2&&S.tab==='shift'&&g2.dataset.init)g2.scrollLeft=g2.dataset.init;
@@ -957,12 +975,12 @@ function vShift(){
       cells+=`<td class="c${k%2===0?' h':''}${on?(br?' brk':' on'):''}" data-act="brk" data-i="${i}" data-t="${t}" title="${tLabel(t)}${on?(br?' 休憩':' — タップで休憩をここへ'):''}"></td>`}
     const nm=S.staff[sh.sid];
     return `<tr style="${posStyle(sh.pos)}">
-      <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${sh.sid&&c.on?`<button class="pin${sh.pin?' on':''}" data-act="pin" data-i="${i}" title="${sh.pin?'決め打ち中：自動作成・調整で動かしません（押すと解除）':'押すと決め打ち（自動作成・調整で動かさない）'}">${sh.pin?'固定':'固定'}</button>`:''}${sh.gen&&!sh.pin?'<span class="subtag" style="background:var(--ink)" title="社員シフトの自動作成で入れた行">自動</span>':''}${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
+      <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${newTag(S.staff[sh.sid])}${sh.sid&&c.on?`<button class="pin${sh.pin?' on':''}" data-act="pin" data-i="${i}" title="${sh.pin?'決め打ち中：自動作成・調整で動かしません（押すと解除）':'押すと決め打ち（自動作成・調整で動かさない）'}">${sh.pin?'固定':'固定'}</button>`:''}${sh.gen&&!sh.pin?'<span class="subtag" style="background:var(--ink)" title="社員シフトの自動作成で入れた行">自動</span>':''}${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
       ${sh.pos===PAID?`<td colspan="2" style="white-space:nowrap;padding:0 4px"><input type="number" step="0.5" min="0" max="12" data-f="paidH" data-i="${i}" value="${sh.paidH??''}" style="width:64px" aria-label="有給の時間"> h</td>`:
       `<td><select class="t" data-f="start" data-i="${i}" aria-label="開始">${tOptions(sh.start,8,31.5)}</select></td>
       <td><select class="t" data-f="end" data-i="${i}" aria-label="終了">${tOptions(sh.end,8.5,32)}</select></td>`}
       <td><select class="pos" data-f="pos" data-i="${i}" aria-label="ポジション">${posOpts(sh.pos)}</select></td>
-      ${(()=>{const L=sh.sid&&posInfo(sh.pos)?.kind==='work'?levelOf(sh.sid,sh.pos):undefined;return L===undefined?'<td class="lvc"></td>':L===null?'<td class="lvc lv0" title="未設定">–</td>':`<td class="lvc lv${L}" title="${esc(lvName(L))}">${L}</td>`})()}
+      ${isHelp(sh.pos)?`<td class="lvc" style="padding:0 2px"><input type="text" data-f="helpTo" data-i="${i}" value="${esc(sh.helpTo||'')}" placeholder="ヘルプ先" style="width:90px;font-size:11px" aria-label="ヘルプ先"></td>`:(()=>{const L=sh.sid&&posInfo(sh.pos)?.kind==='work'?levelOf(sh.sid,sh.pos):undefined;return L===undefined?'<td class="lvc"></td>':L===null?'<td class="lvc lv0" title="未設定">–</td>':`<td class="lvc lv${L}" title="${esc(lvName(L))}">${L}</td>`})()}
       ${cells}
       <td class="v${c.work?' red':''}">${n1(c.work)}</td><td class="v${c.brk?' navy':''}">${n1(c.brk)}</td>
       <td class="v">${n1(c.labor)}</td><td class="v">${n1(c.night)}</td>
@@ -994,7 +1012,7 @@ function vShift(){
     ${alert28Html(dates)}
     ${subStatus()}</section>
   <section class="panel" aria-label="${md(date)}の集計">
-    <div class="bar"><h2>${parse(date).getFullYear()}/${md(date)}（${WD[wd(date)]}）</h2>
+    <div class="bar"><h2>${parse(date).getFullYear()}/${md(date)}（${WD[wd(date)]}）</h2>${(()=>{const E=evalPeriod([date]);return E?`<button class="mini" data-act="go" data-t="eval" data-m="day" title="この日の評価を開く">評価 <b>${E.score}</b>点 <span class="grade g-${E.grade}" style="width:20px;height:20px;font-size:12px;border-radius:4px">${E.grade}</span></button>`:''})()}
       <span class="muted" style="font-size:12px">理想人件費 ${yen(st.idealCost[wd(date)]||0)}／比較 <b class="num ${C.cost-(st.idealCost[wd(date)]||0)>0?'cell-bad':'cell-good'}">${C.cost?yen(C.cost-(st.idealCost[wd(date)]||0)):'—'}</b></span></div>
     ${(()=>{const tr=targetRateOf(date),cap=C.budget*tr/100,over=C.cost-cap;
       return `<div class="autobar"><b>目標人件費率 ${tr}%</b>${C.budget?`<span class="num">上限 ${yen(cap)}</span><span class="pill ${over>0?'bad':'good'}">${over>0?`${yen(over)} 超過`:`あと${yen(-over)} 余裕`}</span>`:'<span class="hint">売上予算を入れると上限が出ます</span>'}
@@ -1008,6 +1026,7 @@ function vShift(){
       <div class="kpi"><span class="k">P/A人件費</span><span class="v">${yen(C.pa)}</span></div>
       <div class="kpi"><span class="k">P/A人件費率</span><span class="v">${C.paRate!=null?(C.paRate*100).toFixed(1)+'%':'—'}</span></div>
     </div>
+    ${C.helpRows.length?`<p class="hint" style="margin:0">ヘルプ（他店へ）：${C.helpRows.map(x=>`${esc(S.staff[x.sh.sid]?.name||'')}→${esc(x.sh.helpTo||'行き先未入力')} ${n1(x.c.labor)}h ${yen(x.c.cost)}`).join('、')}。自店の人件費・人時には含めていません。</p>`:''}
     <div class="notes">
       <label class="field"><span>備考欄</span><input id="note" type="text" data-f="note" value="${esc(d.note)}" placeholder="例：祝日、POS入れ替え"></label>
       <label class="field"><span>メモ（指示・作業）</span><textarea id="memo" data-f="memo" rows="1" placeholder="例：笹嶋さん ホール者にレジ講習">${esc(d.memo)}</textarea></label>
@@ -1076,6 +1095,7 @@ function drawPrint(cv){
   ids.forEach((s,r)=>{const y=top+headH+rowH*r;
     if(r%2){ctx.fillStyle='#faf8f4';ctx.fillRect(M,y,W-2*M,rowH)}
     ctx.fillStyle='#1d1b16';ctx.textAlign='left';const ns=fit(s.name,nameW-28,Math.min(38,rowH*0.42),1);ctx.font=font(ns,1);ctx.fillText(s.name,M+16,y+rowH/2);
+    if(isNew(s)){const tw=ctx.measureText(s.name).width,bx=Math.min(M+24+tw,M+nameW-60),bh=Math.min(30,rowH*0.5);ctx.fillStyle='#2f7a4a';ctx.fillRect(bx,y+rowH/2-bh/2,54,bh);ctx.fillStyle='#fff';ctx.font=font(Math.min(20,bh*0.7),1);ctx.fillText('新人',bx+6,y+rowH/2)}
     dates.forEach((dt,i)=>{const sh=(dayDoc(dt).shifts||[]).find(x=>x.sid===s.id);if(!sh)return;
       const cx=X(i),c=calcShift(sh);
       if(sh.pos===PAID){ctx.fillStyle=PRINT_COL.violet;ctx.fillRect(cx+6,y+5,dayW-12,rowH-10);ctx.fillStyle='#1f3a5c';ctx.textAlign='center';ctx.font=font(Math.min(30,rowH*0.38),1);ctx.fillText('有給'+(sh.paidH?` ${n1(sh.paidH)}h`:''),cx+dayW/2,y+rowH/2);return}
@@ -1085,7 +1105,7 @@ function drawPrint(cv){
       ctx.fillStyle='#1d1b16';ctx.textAlign='center';
       const t=`${tLabel(sh.start)}–${tLabel(sh.end)}`,ts=fit(t,dayW-24,Math.min(40,rowH*0.4),1);ctx.font=font(ts,1);
       const two=rowH>=64;ctx.fillText(t,cx+dayW/2,y+(two?rowH*0.36:rowH/2));
-      if(two){const bs=breakStart(sh,c);const sub=[sh.pos,bs!=null?`休${tLabel(bs)}`:''].filter(Boolean).join('・');
+      if(two){const bs=breakStart(sh,c);const sub=[isHelp(sh.pos)&&sh.helpTo?`ヘルプ→${sh.helpTo}`:sh.pos,bs!=null?`休${tLabel(bs)}`:''].filter(Boolean).join('・');
         if(sub){const ss=fit(sub,dayW-24,Math.min(26,rowH*0.26));ctx.font=font(ss);ctx.fillStyle='#3d3a33';ctx.fillText(sub,cx+dayW/2,y+rowH*0.74)}}});
   });
   const yEnd=top+headH+rowH*ids.length;
@@ -1148,13 +1168,13 @@ function vFinal(){
        <div style="border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#fff;max-width:1100px"><canvas id="printCv" width="2970" height="2100" style="width:100%;height:auto;display:block" aria-label="A4印刷イメージ"></canvas></div>`;
   }else if(mode==='week'){
     const ids=staffList(true).filter(s=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(sh=>sh.sid===s.id)));
-    const rows=ids.map(s=>`<tr class="${s.id===me?'me':''}"><td class="nm">${esc(s.name)}</td>${dates.map(dt=>{
+    const rows=ids.map(s=>`<tr class="${s.id===me?'me':''}"><td class="nm">${esc(s.name)}${newTag(s)}</td>${dates.map(dt=>{
       const sh=(dayDoc(dt).shifts||[]).find(x=>x.sid===s.id);
       if(!sh)return '<td class="sh"></td>';
       if(sh.pos===PAID)return `<td class="off" style="color:var(--ink)">有給${sh.paidH?`<div style="font-weight:400">${n1(sh.paidH)}h</div>`:''}</td>`;
       if(isOff(sh.pos))return `<td class="off">休</td>`;
       if(sh.start==null||sh.end==null)return '<td class="sh"></td>';
-      return `<td class="sh" style="${posStyle(sh.pos)}"><div class="tm">${tLabel(sh.start)}–${tLabel(sh.end)}</div>${sh.pos?`<span class="ps">${esc(sh.pos)}</span>`:''}</td>`}).join('')}</tr>`).join('');
+      return `<td class="sh" style="${posStyle(sh.pos)}"><div class="tm">${tLabel(sh.start)}–${tLabel(sh.end)}</div>${sh.pos?`<span class="ps">${esc(sh.pos)}${isHelp(sh.pos)&&sh.helpTo?`→${esc(sh.helpTo)}`:''}</span>`:''}</td>`}).join('')}</tr>`).join('');
     const cnt=dates.map(dt=>(dayDoc(dt).shifts||[]).filter(sh=>calcShift(sh).on).length);
     body=ids.length?`<div class="scroll"><table class="t wk"><thead><tr><th class="nm" style="position:sticky;left:0;z-index:2">名前</th>${dates.map(dt=>{const w=wd(dt),n=dayDoc(dt).note;return `<th><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}${n?`<div style="font-weight:400">${esc(n)}</div>`:''}</th>`}).join('')}</tr></thead>
       <tbody>${rows}</tbody><tfoot><tr><td class="nm">出勤人数</td>${cnt.map(c=>`<td class="num">${c}人</td>`).join('')}</tr></tfoot></table></div>`:
@@ -1175,7 +1195,7 @@ function vFinal(){
         if(sh.pos!==last){rows+=`<div class="g-group">${esc(sh.pos||'ポジション未定')}（${on.filter(r=>r.sh.pos===sh.pos).length}人）</div>`;last=sh.pos}
         const bs=breakStart(sh,c);
         rows+=`<div class="g-row${S.me===sh.sid?' me':''}" style="${posStyle(sh.pos)}${S.me===sh.sid?';outline:2px solid var(--accent);border-radius:4px':''}">
-          <div class="g-name">${esc(S.staff[sh.sid].name)}</div>
+          <div class="g-name">${esc(S.staff[sh.sid].name)}${newTag(S.staff[sh.sid])}</div>
           <div class="g-track" style="--span:${span}"><div class="g-bar" style="left:${x(sh.start)};width:calc(${x(sh.end)} - ${x(sh.start)})">${tLabel(sh.start)}–${tLabel(sh.end)}</div>
           ${bs!=null?`<div class="g-brk" style="left:${x(bs)};width:calc(${x(bs+c.brk)} - ${x(bs)})" title="休憩 ${tLabel(bs)}–${tLabel(bs+c.brk)}"></div>`:''}</div>
           <div class="g-time">${bs!=null?'休 '+tLabel(bs):''}</div></div>`}
@@ -1201,13 +1221,89 @@ function vSkill(){
   const st=set(),w=workPositions(),list=staffList(),names=st.levelNames||DEFAULT_SETTINGS.levelNames;
   const head=w.map(p=>{const l3=list.filter(s=>levelOf(s.id,p)===3).length,l2=list.filter(s=>levelOf(s.id,p)>=2).length;
     return `<th style="${posStyle(p)};background:var(--pc);color:var(--p-text);min-width:96px">${esc(p)}<div style="font-weight:400">リーダー${l3}・一人前以上${l2}</div>${l3?'':'<div><span class="pill bad">リーダー不在</span></div>'}</th>`}).join('');
-  const rows=list.map(s=>`<tr><td style="white-space:nowrap"><b>${esc(s.name)}</b>${s.limit28?' <span class="tag28 near">留学生</span>':''}<div class="muted" style="font-size:11px">${s.kind==='社員'?'社員':'P/A'}</div></td>${w.map(p=>{const L=levelOf(s.id,p);
+  const rows=list.map(s=>`<tr><td style="white-space:nowrap"><b>${esc(s.name)}</b>${s.limit28?' <span class="tag28 near">留学生</span>':''}${newTag(s)}<div class="muted" style="font-size:11px">${s.kind==='社員'?'社員':'P/A'}</div></td>${w.map(p=>{const L=levelOf(s.id,p);
     return `<td class="${L==null?'':'lv'+L}"><select data-lv="${esc(p)}" data-id="${s.id}" class="${L==null?'':'lv'+L}" aria-label="${esc(s.name)}の${esc(p)}">${L==null?'<option value="" selected>未設定</option>':''}${names.map((n,i)=>`<option value="${i}"${L===i?' selected':''}>${i} ${esc(n)}</option>`).join('')}</select></td>`}).join('')}</tr>`).join('');
   return `<section class="panel"><div class="bar"><h2>スキルレベル</h2><span class="hint">自動配置はこの表を使います。0の人はそのポジションに入れません。</span></div>
     <div class="kpis">${names.map((n,i)=>`<label class="field"><span>レベル${i}の呼び方</span><input type="text" id="lvn${i}" data-lvname="${i}" value="${esc(n)}"></label>`).join('')}</div>
     <label style="font-size:13px;font-weight:700"><input type="checkbox" id="leadReq" data-leadreq="1"${st.leaderReq?' checked':''}> 自動配置で、理想人数があるポジションにリーダー（レベル3）を必ず1人入れる</label>
     ${list.length?`<div class="scroll"><table class="t skm"><thead><tr><th>スタッフ</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">名簿にスタッフがいません。</div>'}
     <p class="hint">配置の考え方：①リーダーがいないポジションへリーダーを置く（リーダーが少ないポジションから）→ ②理想人数の不足をレベルが高い人から埋める（見習いは一人前以上がいる所へ）→ ③余った人は一番得意なポジションへ。</p></section>`;
+}
+
+/* --- 評価（日・週・月を100点で） --- */
+const EVAL_W={rate:30,cover:25,req:15,leader:10,h28:10,emp:5,newbie:5};
+const gradeOf=sc=>sc>=90?'S':sc>=80?'A':sc>=70?'B':sc>=60?'C':'D';
+function overlapH(a1,a2,b1,b2){return Math.max(0,Math.min(a2,b2)-Math.max(a1,b1))}
+function evalPeriod(dates){
+  const st=set(),items=[];
+  const days=dates.filter(dt=>(dayDoc(dt).shifts||[]).some(x=>calcShift(x).on));
+  if(!days.length)return null;
+  // 人件費率
+  let cost=0,bud=0,cap=0;for(const dt of days){const C=calcDay(dt);cost+=C.cost;bud+=C.budget;cap+=C.budget*targetRateOf(dt)/100}
+  if(bud){const R=cost/bud*100,T=cap/bud*100,diff=R-T;
+    const sc=diff>0?Math.max(0,100-diff*15):Math.max(0,100-Math.max(0,-diff-3)*8);
+    items.push({k:'rate',label:'人件費率',sc,val:`${R.toFixed(1)}%（目標${T.toFixed(1)}%）`,
+      tip:diff>0.5?`目標を${diff.toFixed(1)}ポイント上回っています。「シフト作成」の「目標に合わせる」で、人が多い時間帯から短くできます。`:-diff>3?`目標より${(-diff).toFixed(1)}ポイント低く、人が足りていない可能性があります。人員配置の不足も確認してください。`:''})}
+  // 人員配置（時間帯ごとの理想人数）
+  let I=0,short=0,sur=0;for(const dt of days){const d=dayDoc(dt),ideal=(d.ideal||[]).map(Number);if(!ideal.some(v=>v>0))continue;const H=hourCover(d).H;
+    ideal.forEach((v,h)=>{if(v>0){I+=v;short+=Math.max(0,v-H[h]);sur+=Math.max(0,H[h]-v)}})}
+  if(I){const sc=Math.max(0,100-short/I*300-sur/I*100);
+    items.push({k:'cover',label:'人員配置',sc,val:`不足 ${n1(short)}人時・過剰 ${n1(sur)}人時`,
+      tip:short>0?'理想人数に届かない時間帯があります。「シフト作成」の過不足の行（赤）を見て、出勤時間を延ばすか人を足してください。':sur/I>0.1?'人が多い時間帯があります。人件費を下げる余地があります。':''})}
+  // 希望の反映
+  let rq=0,gr=0,offReq=0,offOk=0;for(const dt of days)for(const sh of dayDoc(dt).shifts||[]){if(!sh.req||!S.staff[sh.sid])continue;
+    if(sh.req.off){offReq++;if(isOff(sh.pos)||sh.start==null)offOk++;continue}
+    const h=sh.req.end-sh.req.start;if(!(h>0))continue;rq+=h;if(sh.start!=null&&!isOff(sh.pos))gr+=overlapH(sh.req.start,sh.req.end,sh.start,sh.end)}
+  if(rq||offReq){const pct=(gr+offOk*8)/(rq+offReq*8)*100;
+    items.push({k:'req',label:'希望の反映',sc:pct,val:`${rq?`希望${n1(rq)}hのうち${n1(gr)}h`:''}${offReq?`${rq?'・':''}休み希望 ${offOk}/${offReq}件`:''}`,
+      tip:pct<85?'希望から大きく変えたシフトがあります。「希望との違い」で理由を確認し、本人に伝えてください。':''})}
+  // リーダー配置
+  const anyLv=Object.values(S.staff).some(x=>x.levels&&Object.keys(x.levels).length);
+  if(anyLv){let need=0,ok=0;const miss=[];for(const dt of days){const d=dayDoc(dt);for(const [p,v] of Object.entries(d.posIdeal||{})){if(!(Number(v)>0)||posInfo(p)?.kind!=='work')continue;need++;
+      if((d.shifts||[]).some(x=>x.pos===p&&calcShift(x).on&&levelOf(x.sid,p)===3))ok++;else miss.push(`${md(dt)}${p.split('/')[0]}`)}}
+    if(need)items.push({k:'leader',label:'リーダー配置',sc:ok/need*100,val:`${ok}/${need}`,tip:miss.length?`リーダー不在：${miss.slice(0,6).join('、')}${miss.length>6?' ほか':''}。自動配置を「全員やり直し」にするか、スキルを見直してください。`:''})}
+  // 28時間
+  const intl=staffList(true).filter(x=>x.limit28);
+  if(intl.length){let v=0;const who=[];for(const x of intl){const r=rollMax(x.id,dates[0],dates[dates.length-1]);if(r.m>Number(st.limit28)){v++;who.push(`${x.name}（${n1(r.m)}h）`)}}
+    items.push({k:'h28',label:'28時間',sc:v?Math.max(0,100-v*50):100,val:v?`超過 ${v}人`:'全員28時間以内',tip:v?`${who.join('、')}が超えています。「28時間を調整」で直してください（法令上の上限です）。`:''})}
+  // 社員配置
+  const minE=Number(st.minEmp??2);if(minE>0&&Object.values(S.staff).some(x=>x.kind==='社員')){let ok=0;const low=[];
+    for(const dt of days){const n=(dayDoc(dt).shifts||[]).filter(x=>S.staff[x.sid]?.kind==='社員'&&calcShift(x).on).length;if(n>=minE)ok++;else low.push(md(dt))}
+    items.push({k:'emp',label:'社員配置',sc:ok/days.length*100,val:`${ok}/${days.length}日で${minE}人以上`,tip:low.length?`社員が少ない日：${low.join('、')}`:''})}
+  // 新人フォロー
+  let nb=0,nbOk=0;const lone=[];for(const dt of days){const rows=(dayDoc(dt).shifts||[]).filter(x=>calcShift(x).on);
+    for(const r of rows){if(!isNew(S.staff[r.sid]))continue;nb++;
+      const buddy=rows.some(o=>o!==r&&o.pos===r.pos&&!isNew(S.staff[o.sid])&&(levelOf(o.sid,r.pos)??2)>=2&&overlapH(o.start,o.end,r.start,r.end)>=(r.end-r.start)/2);
+      if(buddy)nbOk++;else lone.push(`${md(dt)} ${S.staff[r.sid].name}`)}}
+  if(nb)items.push({k:'newbie',label:'新人フォロー',sc:nbOk/nb*100,val:`${nbOk}/${nb}回`,tip:lone.length?`同じポジションに一人前以上がいない：${lone.slice(0,5).join('、')}`:''});
+  const wsum=items.reduce((a,x)=>a+EVAL_W[x.k],0),score=Math.round(items.reduce((a,x)=>a+x.sc*EVAL_W[x.k],0)/wsum);
+  return {score,grade:gradeOf(score),items,days};
+}
+function vEval(){
+  const mode=S.evalMode||'week';let dates,title,nav;
+  if(mode==='day'){const dt=weekDates(S.week)[S.dayIdx];dates=[dt];title=`${md(dt)}（${WD[wd(dt)]}）`;
+    nav=`<div class="weeknav"><button class="btn sm" data-act="evDay" data-n="-1" aria-label="前の日">‹</button><span class="lbl">${md(dt)}（${WD[wd(dt)]}）</span><button class="btn sm" data-act="evDay" data-n="1" aria-label="次の日">›</button></div>`}
+  else if(mode==='week'){dates=weekDates(S.week);title=`${md(S.week)}〜${md(addDays(S.week,6))}`;nav=weekNav()}
+  else{const y=S.year||parse(S.week).getFullYear(),m=S.month||parse(S.week).getMonth()+1;S.year=y;S.month=m;dates=[];for(let d=`${y}-${pad(m)}-01`;d.slice(0,7)===`${y}-${pad(m)}`;d=addDays(d,1))dates.push(d);title=`${y}年${m}月`;
+    nav=`<div class="weeknav"><button class="btn sm" data-act="mo" data-n="-1" aria-label="前の月">‹</button><span class="lbl">${y}年${m}月</span><button class="btn sm" data-act="mo" data-n="1" aria-label="次の月">›</button></div>`}
+  const seg=`<div class="seg" role="group" aria-label="期間">${[['day','日'],['week','週'],['month','月']].map(([k,l])=>`<button data-act="evMode" data-m="${k}" aria-pressed="${mode===k}">${l}</button>`).join('')}</div>`;
+  const E=evalPeriod(dates);
+  if(!E)return `<section class="panel"><div class="bar"><h2>評価</h2>${seg}${nav}</div><div class="empty">${title}のシフトがまだありません。</div></section>`;
+  const col=sc=>sc>=90?'var(--good)':sc>=75?'var(--ink)':sc>=60?'var(--warn)':'var(--bad)';
+  const rows=E.items.map(x=>`<tr><td style="white-space:nowrap"><b>${x.label}</b><div class="muted" style="font-size:11px">配点${EVAL_W[x.k]}</div></td><td style="width:40%"><div class="meter"><i style="width:${Math.round(x.sc)}%;background:${col(x.sc)}"></i></div></td><td class="num" style="text-align:right"><b>${Math.round(x.sc)}</b></td><td style="font-size:12px">${esc(x.val)}</td></tr>`).join('');
+  const good=E.items.filter(x=>x.sc>=90).map(x=>x.label),bad=E.items.filter(x=>x.sc<85&&x.tip).sort((a,b)=>(a.sc-b.sc)*EVAL_W[b.k]);
+  let byDay='';
+  if(mode!=='day'){const ds=E.days.map(dt=>({dt,e:evalPeriod([dt])}));
+    byDay=`<section class="panel"><h2>日別の点数</h2><div style="display:flex;gap:4px;align-items:flex-end;overflow-x:auto;padding-bottom:4px">${ds.map(x=>`<button data-act="evGo" data-d="${x.dt}" title="${md(x.dt)} ${x.e.score}点" style="border:0;background:none;padding:0;cursor:pointer;display:grid;gap:2px;justify-items:center;min-width:30px;font:inherit"><span class="num" style="font-size:11px;font-weight:600">${x.e.score}</span><span style="display:block;width:22px;height:${Math.max(4,x.e.score*0.8)}px;background:${col(x.e.score)};border-radius:3px 3px 0 0"></span><span style="font-size:10px;color:var(--muted)">${parse(x.dt).getDate()}<br>${WD[wd(x.dt)]}</span></button>`).join('')}</div>
+      <p class="hint" style="margin:0">棒を押すとその日の評価を開きます。${ds.length?`いちばん低いのは ${md(ds.slice().sort((a,b)=>a.e.score-b.e.score)[0].dt)}（${ds.slice().sort((a,b)=>a.e.score-b.e.score)[0].e.score}点）です。`:''}</p></section>`}
+  return `<section class="panel"><div class="bar"><h2>評価</h2>${seg}${nav}</div>
+    <div class="score"><div style="display:flex;align-items:center;gap:14px"><span class="grade g-${E.grade}">${E.grade}</span><span class="big num">${E.score}<span style="font-size:18px">点</span></span></div>
+      <div><div style="font-weight:700">${title}${mode!=='day'?`（シフトのある${E.days.length}日）`:''}</div><div class="muted" style="font-size:12px">S 90点以上／A 80／B 70／C 60／D 60点未満。データのない項目は採点から外しています。</div></div></div>
+    <div class="scroll"><table class="t evtbl"><tbody>${rows}</tbody></table></div></section>
+  <div class="two">
+    <section class="panel"><h2>良い点</h2>${good.length?`<ul style="margin:0;padding-left:1.2em">${good.map(g=>`<li>${g}は良好です</li>`).join('')}</ul>`:'<p class="muted" style="margin:0">90点以上の項目はまだありません。</p>'}</section>
+    <section class="panel"><h2>改善点</h2>${bad.length?`<ol style="margin:0;padding-left:1.2em;display:grid;gap:6px">${bad.map(x=>`<li><b>${x.label}（${Math.round(x.sc)}点）</b><div style="font-size:13px">${esc(x.tip)}</div></li>`).join('')}</ol>`:'<p class="muted" style="margin:0">大きな問題はありません。</p>'}</section>
+  </div>${byDay}`;
 }
 
 /* --- 使い方 --- */
@@ -1226,7 +1322,15 @@ function vHelp(){
       ${step(2,'シフト作成','「社員シフトを自動作成」→ 各日の売上予算と時間ごとの理想人数を入れる →「週全体を目標に合わせる」→「28時間を調整」→「ポジション」「休憩を配置」。どれも「元に戻す」で取り消せます。')}
       ${step(3,'希望との違い','シフト作成の下に、希望と確定が違う人と理由が出ます。「本人に送るLINE文をコピー」でそのまま連絡できます。')}
       ${step(4,'完成シフト','日別・週間で確認。「A4印刷用」から印刷、またはPDFで保存。')}
+      ${step(5,'評価（集計 → 評価）','日・週・月を100点で採点。人件費率・人員配置・希望の反映・リーダー・28時間・社員配置・新人フォロー。改善点と、点数の低い日がわかります。')}
+      ${step(6,'日曜：社員の残業・深夜（集計 → 社員勤務時間）','週の残業時間・深夜時間・残業代・深夜手当を社員ごとに計算。「入力用にコピー」で転記できます。')}
     </ol>
+    <h3>覚えておくと便利</h3>
+    <ul style="margin:0;padding-left:1.4em;display:grid;gap:4px">
+      <li><b>新人</b>：名簿で「新人」にチェックすると、あらゆる画面で「新人」の印が付き、自動配置では一人前以上と同じポジションに入れます。</li>
+      <li><b>ヘルプ（他店へ）</b>：ポジションを「ヘルプ」にして行き先を入れると、その時間は自店の人件費・人員に含めません（本人の28時間・残業には含めます）。</li>
+      <li><b>有給</b>：ポジションを「有給」にして時間を入れます。残りは「集計 → 有給」。</li>
+    </ul>
     <h3>優先順位（自動作成・調整のルール）</h3>
     <ol style="margin:0;padding-left:1.4em;display:grid;gap:4px">
       <li>決め打ち（固定）は動かさない</li><li>社員の休み希望</li><li>留学生はどの連続7日間でも28時間以内（月をまたいでも）。28時間ギリギリまで入れる</li>
@@ -1234,7 +1338,7 @@ function vHelp(){
     </ol>
     <h3>データについて</h3>
     <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
-    <p class="hint" style="margin:0">バージョン ${'1.0'}</p></section>`;
+    <p class="hint" style="margin:0">バージョン ${'1.1'}</p></section>`;
 }
 
 /* --- 有給 --- */
@@ -1273,12 +1377,12 @@ function vReq(){
   const dates=weekDates(S.week),has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
   const groups=[['アルバイト',list.filter(s=>s.kind!=='社員')],['社員',list.filter(s=>s.kind==='社員')]].filter(g=>g[1].length);
   const done=list.filter(s=>s.kind!=='社員'&&has(s.id)).length,pa=list.filter(s=>s.kind!=='社員').length;
-  const side=groups.map(([g,xs])=>`<h3>${g}</h3>`+xs.map(x=>`<button data-act="bpick" data-id="${x.id}" aria-current="${x.id===S.bulk.sid}">${esc(x.name)}${x.limit28?'<span class="tag28 near">留</span>':''}<span class="ck">${has(x.id)?'✓ 入力済':''}</span></button>`).join('')).join('');
+  const side=groups.map(([g,xs])=>`<h3>${g}</h3>`+xs.map(x=>`<button data-act="bpick" data-id="${x.id}" aria-current="${x.id===S.bulk.sid}">${esc(x.name)}${x.limit28?'<span class="tag28 near">留</span>':''}${isNew(x)?'<span class="tagnew">新</span>':''}<span class="ck">${has(x.id)?'✓ 入力済':''}</span></button>`).join('')).join('');
   return `<section class="panel"><div class="bar"><h2>希望入力</h2>${weekNav()}<span class="pill ${done===pa?'good':'warn'}">アルバイト ${done}/${pa}人 入力済み</span></div>
     <p class="hint" style="margin:0">スタッフを選んで、LINEで届いた希望を入れます。「登録して次の人へ」で次々に進めます。入れた内容は「シフト作成」にそのまま入ります。</p></section>
   <div class="reqwrap"><nav class="reqlist panel" aria-label="スタッフ">${side}</nav>
     <div style="display:grid;gap:12px;min-width:0">
-      <label class="field reqpick"><span>スタッフ</span><select id="reqPick" style="font-size:16px;padding:8px">${groups.map(([g,xs])=>`<optgroup label="${g}">${xs.map(x=>`<option value="${x.id}"${x.id===S.bulk.sid?' selected':''}>${has(x.id)?'✓ ':''}${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select></label>
+      <label class="field reqpick"><span>スタッフ</span><select id="reqPick" style="font-size:16px;padding:8px">${groups.map(([g,xs])=>`<optgroup label="${g}">${xs.map(x=>`<option value="${x.id}"${x.id===S.bulk.sid?' selected':''}>${has(x.id)?'✓ ':''}${esc(x.name)}${isNew(x)?'（新人）':''}</option>`).join('')}</optgroup>`).join('')}</select></label>
       ${vBulk(true)}
       ${alert28Html(dates)}
     </div></div>`;
@@ -1304,7 +1408,7 @@ function vBulk(page){
   const rm=s.limit28?rollMax(B.sid,dates[0],addDays(dates[6],6),ov):{m:0,at:null};
   const dirty=JSON.stringify(B.days)!==B.orig;
   return `<section class="panel" id="bulkForm"><div style="display:grid;gap:10px">
-    <div class="bar"><h3 style="font-size:16px;color:var(--fg)">${esc(s.name)}</h3>${s.limit28?'<span class="tag28 near">留学生</span>':''}
+    <div class="bar"><h3 style="font-size:16px;color:var(--fg)">${esc(s.name)}</h3>${s.limit28?'<span class="tag28 near">留学生</span>':''}${newTag(s)}
       <span class="bar" style="margin-left:auto"><button class="btn sm" data-act="bAll" data-v="on">全日出勤</button><button class="btn sm" data-act="bAll" data-v="off">全日休み</button>
       <select id="bS" aria-label="まとめて入れる開始">${tOptions(S.bulkT?.[0]??17,8,31.5)}</select>〜<select id="bE" aria-label="まとめて入れる終了">${tOptions(S.bulkT?.[1]??23.5,8.5,32)}</select><button class="btn sm" data-act="bTime">出勤日にこの時間</button></span></div>
     <div>${rows}</div>
@@ -1435,7 +1539,9 @@ function vRoster(){
       <td style="white-space:nowrap">
         <label title="P/A人件費に含める"><input type="checkbox" data-sf="paCount" data-id="${s.id}"${s.kind!=='社員'||s.paCount?' checked':''}${s.kind!=='社員'?' disabled':''}> P/A計上</label>
         <label title="28時間管理の対象"><input type="checkbox" data-sf="limit28" data-id="${s.id}"${s.limit28?' checked':''}> 留学生</label>
-        <label><input type="checkbox" data-sf="active" data-id="${s.id}"${s.active!==false?' checked':''}> 在籍</label></td>
+        <label title="新人の印を付ける"><input type="checkbox" data-sf="newbie" data-id="${s.id}"${s.newbie?' checked':''}> 新人</label>
+        <label><input type="checkbox" data-sf="active" data-id="${s.id}"${s.active!==false?' checked':''}> 在籍</label>
+        ${s.newbie?`<div style="margin-top:2px;font-size:11px">入社日 <input type="date" data-sf="joinDate" data-id="${s.id}" value="${esc(s.joinDate||'')}" aria-label="入社日" style="font-size:11px"></div>`:''}</td>
       <td style="white-space:nowrap"><button class="btn sm ghost" data-act="mv" data-id="${s.id}" data-n="-1" aria-label="上へ">↑</button><button class="btn sm ghost" data-act="mv" data-id="${s.id}" data-n="1" aria-label="下へ">↓</button></td></tr>`}).join('');
   const tot=dates.map(dt=>calcDay(dt).cost);
   return `<section class="panel"><div class="bar"><h2>名簿</h2>${weekNav()}<span style="margin-left:auto"><button class="btn sm pri" data-act="addStaff">＋ スタッフを追加</button></span></div>
@@ -1458,7 +1564,31 @@ function vEmp(){
     return `<tr${m===S.week?' style="outline:2px solid var(--accent);outline-offset:-2px"':''}><td class="num">${md(m)}–${md(addDays(m,6))}</td>${cells}<td class="num">${st.border}</td></tr>`}).join('');
   return `<section class="panel"><div class="bar"><h2>社員勤務時間</h2><span class="hint">週（月〜日）の労働時間。ボーダー（${st.border}時間）未満は赤で表示</span></div>
   ${emps.length?`<div class="scroll"><table class="t"><thead><tr><th>週</th>${emps.map(e=>`<th class="r">${esc(e.name)}</th>`).join('')}<th class="r">ボーダー</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">名簿に「社員」区分のスタッフがいません。</div>'}
-  <p class="hint">期間は「集計 → 週間・月間」の月間見込みの開始日〜終了日に合わせています。ボーダーは「マスタ → 設定」で変更できます。</p></section>`;
+  <p class="hint">期間は「集計 → 週間・月間」の月間見込みの開始日〜終了日に合わせています。ボーダーは「マスタ → 設定」で変更できます。</p></section>
+  ${empOT()}`;
+}
+/* 社員の残業・深夜（週）：1日8時間超＋週40時間超（1日で数えた分を除く）。深夜は22時〜翌5時 */
+function otWeek(e,week){
+  const st=set(),days=weekDates(week).map(dt=>{let l=0,n=0,w=0,help=[];for(const sh of dayDoc(dt).shifts||[]){if(sh.sid!==e.id)continue;const c=calcShift(sh);if(!c.on)continue;l+=c.labor;n+=c.night;w+=c.work;if(c.help)help.push(sh.helpTo||'他店')}
+    const dOT=Math.max(0,l-Number(st.otAfter??8));return {dt,l,n,dOT,help}});
+  const labor=days.reduce((a,d)=>a+d.l,0),dOT=days.reduce((a,d)=>a+d.dOT,0),reg=labor-dOT,wOT=Math.max(0,reg-Number(st.weeklyOT??40));
+  const night=days.reduce((a,d)=>a+d.n,0),ot=dOT+wOT,wage=Number(e.wage)||0;
+  const otPay=Math.round(wage*Number(st.otRate??1.25)*ot),nightPay=Math.round(wage*Number(st.nightRate??0.25)*night);
+  return {days,labor,dOT,wOT,ot,night,otPay,nightPay,wage};
+}
+function empOT(){
+  const emps=staffList(true).filter(x=>x.kind==='社員'&&x.active!==false);if(!emps.length)return '';
+  const W=S.week,R=emps.map(e=>({e,r:otWeek(e,W)}));
+  const rows=R.map(({e,r})=>`<tr><td style="white-space:nowrap"><b>${esc(e.name)}</b></td><td class="num">${n1(r.labor)}</td><td class="num">${n1(r.dOT)}</td><td class="num">${n1(r.wOT)}</td><td class="num"><b>${n1(r.ot)}</b></td><td class="num"><b>${n1(r.night)}</b></td><td class="num">${yen(r.otPay)}</td><td class="num">${yen(r.nightPay)}</td><td class="num"><b>${yen(r.otPay+r.nightPay)}</b></td></tr>`).join('');
+  const detail=R.map(({e,r})=>`<tr><td style="white-space:nowrap">${esc(e.name)}</td>${r.days.map(d=>`<td class="num" style="font-size:12px">${d.l?`${n1(d.l)}${d.dOT?`<div style="color:var(--bad)">残${n1(d.dOT)}</div>`:''}${d.n?`<div style="color:var(--ink)">深${n1(d.n)}</div>`:''}${d.help.length?`<div style="color:var(--muted)">→${esc(d.help.join(','))}</div>`:''}`:'<span class="muted">—</span>'}</td>`).join('')}</tr>`).join('');
+  const tot=R.reduce((a,x)=>({ot:a.ot+x.r.ot,night:a.night+x.r.night,pay:a.pay+x.r.otPay+x.r.nightPay}),{ot:0,night:0,pay:0});
+  S.otText=`【${md(W)}〜${md(addDays(W,6))} 社員 残業・深夜】\n`+R.map(({e,r})=>`${e.name}：労働${n1(r.labor)}h／残業${n1(r.ot)}h（1日8h超${n1(r.dOT)}・週40h超${n1(r.wOT)}）／深夜${n1(r.night)}h／残業代${yen(r.otPay)}・深夜手当${yen(r.nightPay)}`).join('\n');
+  return `<section class="panel"><div class="bar"><h2>社員の残業・深夜（週）</h2>${weekNav()}<span style="margin-left:auto"><button class="btn sm" data-act="copyOT">入力用にコピー</button></span></div>
+    <div class="kpis"><div class="kpi"><span class="k">残業 合計</span><span class="v">${n1(tot.ot)}h</span></div><div class="kpi"><span class="k">深夜 合計</span><span class="v">${n1(tot.night)}h</span></div><div class="kpi hi"><span class="k">残業代＋深夜手当</span><span class="v">${yen(tot.pay)}</span></div></div>
+    <div class="scroll"><table class="t"><thead><tr><th>社員</th><th class="r">労働h</th><th class="r">1日8h超</th><th class="r">週40h超</th><th class="r">残業 計</th><th class="r">深夜h</th><th class="r">残業代</th><th class="r">深夜手当</th><th class="r">合計</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <details><summary style="cursor:pointer;font-weight:700;font-size:13px">日別の内訳</summary><div class="scroll" style="margin-top:6px"><table class="t"><thead><tr><th>社員</th>${weekDates(W).map(dt=>`<th class="r">${md(dt)}（${WD[wd(dt)]}）</th>`).join('')}</tr></thead><tbody>${detail}</tbody></table></div></details>
+    ${S.otCopy?`<textarea readonly rows="${emps.length+1}" style="width:100%" id="otBox">${esc(S.otText)}</textarea>`:''}
+    <p class="hint">残業＝1日${set().otAfter??8}時間を超えた分＋週${set().weeklyOT??40}時間を超えた分（1日で数えた分は除く）。残業代＝時給×${set().otRate}×残業時間、深夜手当＝時給×${set().nightRate??0.25}×深夜（${tLabel(set().nightFrom)}〜${tLabel(set().nightTo)}）の時間。残業と深夜が重なる時間は両方つきます。ヘルプ（他店）の時間も本人の勤務として含めます。法定休日の割増は含みません。時給・割増率は名簿と設定の値です。</p></section>`;
 }
 
 /* --- 28h --- */
@@ -1505,7 +1635,7 @@ function vSettings(){
   const st=set();
   const pos=st.positions.map((p,i)=>`<tr><td><input type="text" data-pf="name" data-i="${i}" value="${esc(p.name)}" aria-label="ポジション名"></td>
     <td><div class="swatches">${COLORS.map(c=>`<button class="sw" style="--pc:var(--p-${c})" data-act="pcolor" data-i="${i}" data-c="${c}" aria-pressed="${p.color===c}" aria-label="${c}"></button>`).join('')}</div></td>
-    <td><select data-pf="kind" data-i="${i}" aria-label="扱い"><option value="work"${p.kind==='work'?' selected':''}>人数集計に入れる</option><option value="free"${p.kind==='free'?' selected':''}>勤務（集計外）</option><option value="off"${p.kind==='off'?' selected':''}>休み</option></select></td>
+    <td><select data-pf="kind" data-i="${i}" aria-label="扱い"><option value="work"${p.kind==='work'?' selected':''}>人数集計に入れる</option><option value="free"${p.kind==='free'?' selected':''}>勤務（集計外）</option><option value="help"${p.kind==='help'?' selected':''}>ヘルプ（他店へ・自店に含めない）</option><option value="off"${p.kind==='off'?' selected':''}>休み</option></select></td>
     <td><button class="del" data-act="delPos" data-i="${i}" aria-label="${esc(p.name)}を削除">×</button></td></tr>`).join('');
   const num=(f,l,step=1)=>`<label class="field"><span>${l}</span><input type="number" step="${step}" id="s_${f}" data-sset="${f}" value="${st[f]}"></label>`;
   const cur=S.stores[S.store]||{};
@@ -1534,7 +1664,7 @@ function vSettings(){
   <section class="panel"><h2>計算ルール</h2>
     <div class="kpis">${num('border','社員ボーダー（週h）',0.5)}${num('limit28','28h管理の上限（h）',0.5)}
     ${num('brk1At','休憩1：勤務がこの時間以上',0.5)}${num('brk1','→ 休憩（h）',0.25)}${num('brk2Over','休憩2：勤務がこの時間超',0.5)}${num('brk2','→ 休憩（h）',0.25)}
-    ${num('otAfter','残業：労働がこの時間超',0.5)}${num('otRate','残業の割増率',0.05)}
+    ${num('otAfter','残業：労働がこの時間超',0.5)}${num('otRate','残業の割増率',0.05)}${num('weeklyOT','週の残業：この時間超',0.5)}${num('nightRate','深夜の割増率',0.05)}
     ${num('nightFrom','深夜の開始（時）',0.5)}${num('nightTo','深夜の終了（24+時）',0.5)}
     ${num('peakFrom','ピーク帯表示 開始',1)}${num('peakTo','ピーク帯表示 終了',1)}</div>
     <p class="hint">人件費 ＝ 時給 ×（労働時間のうち${st.otAfter}hまで）＋ 時給 × ${st.otRate} ×（${st.otAfter}hを超えた分）。労働 ＝ 勤務 − 休憩。シートの計算と同じです。</p></section></div>`;
@@ -1567,6 +1697,7 @@ app.addEventListener('change',e=>{
     else{const sh=d.shifts[+el.dataset.i];
       if(f==='sid')sh.sid=el.value; else if(f==='pos'){sh.pos=el.value;if(isOff(sh.pos)){if(sh.pos===PAID&&sh.paidH==null)sh.paidH=Number(S.staff[sh.sid]?.paidDayH)||null;sh.start=null;sh.end=null;if(!sh.req&&sh.sid&&sh.pos!==PAID)sh.req={off:true}}}
       else if(f==='paidH'){sh.paidH=el.value===''?null:Math.max(0,Number(el.value))}
+      else if(f==='helpTo'){sh.helpTo=el.value.trim()}
       else{sh[f]=el.value===''?null:Number(el.value);sh.bs=null;
         if(sh.req&&!sh.req.off&&sh.req.start===sh.start&&sh.req.end===sh.end){sh.why='';}
         else if(sh.req)sh.why=sh.why&&sh.why.startsWith('目標人件費率')?'':sh.why}
@@ -1615,7 +1746,11 @@ app.addEventListener('click',e=>{
     S.bulkT=[s0,e0];let n=0;for(const v of Object.values(S.bulk.days))if(v.st==='on'){v.start=s0;v.end=e0;n++}if(!n)toast('先に「出勤」の日を選んでください');return render()}
   if(a==='bSave'){bulkSave();return render()}
   if(a==='bSaveNext'){if(!bulkSave())return render();const l=staffList().filter(x=>x.kind!=='社員');const all=l.length?l:staffList(),i=all.findIndex(x=>x.id===S.bulk.sid);const nx=all[(i+1)%all.length];S.bulk=bulkInit(nx.id);render();document.getElementById('bulkForm')?.scrollIntoView({block:'start',behavior:'smooth'});return}
-  if(a==='go'){goTab(b.dataset.t);return}
+  if(a==='go'){if(b.dataset.m)S.evalMode=b.dataset.m;goTab(b.dataset.t);return}
+  if(a==='copyOT'){S.otCopy=true;render();const t=S.otText;try{navigator.clipboard.writeText(t).then(()=>toast('コピーしました'),()=>{document.getElementById('otBox')?.select();toast('下の文を選択してコピーしてください')})}catch(_){};return}
+  if(a==='evMode'){S.evalMode=b.dataset.m;return render()}
+  if(a==='evDay'){let i=S.dayIdx+Number(b.dataset.n);if(i<0){S.week=addDays(S.week,-7);i=6}if(i>6){S.week=addDays(S.week,7);i=0}S.dayIdx=i;remember();return render()}
+  if(a==='evGo'){const dt=b.dataset.d;S.week=monday(dt);S.dayIdx=(wd(dt)+6)%7;S.evalMode='day';remember();return render()}
   if(a==='fmode'){S.finalMode=b.dataset.m;return render()}
   if(a==='savePdf'){S.pdfMode='pdf';savePdf();return}
   if(a==='printNow'){S.pdfMode='print';savePdf();return}
@@ -1703,7 +1838,7 @@ document.getElementById('who').addEventListener('click',e=>{const b=e.target.clo
   if(b.dataset.act==='changeMe'){S.me='';try{localStorage.removeItem('shiftapp:me:'+S.store)}catch(_){};S.draft=null;render()}});
 function goTab(t){S.tab=t;S.confirm=null;remember();render();window.scrollTo(0,0);try{history.replaceState(null,'','#'+S.tab)}catch(_){}}
 document.getElementById('tabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
-  if(b.dataset.group){const last={stats:S.lastStats||'week',master:S.lastMaster||'roster'}[b.dataset.group];return goTab(last)}
+  if(b.dataset.group){const last={stats:S.lastStats||'eval',master:S.lastMaster||'roster'}[b.dataset.group];return goTab(last)}
   if(b.dataset.tab)goTab(b.dataset.tab)});
 document.getElementById('subtabs').addEventListener('click',e=>{const b=e.target.closest('button[data-tab]');if(!b)return;
   if(b.dataset.in==='stats')S.lastStats=b.dataset.tab;else S.lastMaster=b.dataset.tab;goTab(b.dataset.tab)});
@@ -1715,7 +1850,7 @@ function remember(){try{localStorage.setItem('shiftapp:view',JSON.stringify({tab
   S.week=def; S.dayIdx=0; S.tab='req';
   try{S.me=localStorage.getItem('shiftapp:me')||''}catch(_){}
   try{const v=JSON.parse(localStorage.getItem('shiftapp:view')||'null');if(v){S.tab=v.tab||S.tab;S.week=v.week||def;S.dayIdx=v.dayIdx||0}}catch(_){}
-  const h=(location.hash||'').slice(1);if(['help','req','paid','year','skill','shift','final','week','roster','emp','h28','fare','settings'].includes(h))S.tab=h;
+  const h=(location.hash||'').slice(1);if(['eval','help','req','paid','year','skill','shift','final','week','roster','emp','h28','fare','settings'].includes(h))S.tab=h;
 })();
 render();
 try{document.fonts?.ready.then(()=>{if(S.tab==="final"&&S.finalMode==="print")render()})}catch(_){}
