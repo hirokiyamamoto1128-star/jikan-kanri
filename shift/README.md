@@ -1,6 +1,6 @@
 # シフトマネージャー
 
-銀だこハイボール横丁 東銀座店のシフト作成・人件費管理WEBアプリです。
+お店のシフト作成・人件費管理WEBアプリです。
 URL：https://hirokiyamamoto1128-star.github.io/jikan-kanri/shift/
 
 アプリの中の「マスタ → 使い方」にも同じ内容があります。
