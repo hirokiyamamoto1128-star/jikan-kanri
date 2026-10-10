@@ -254,6 +254,7 @@ table.wk tr.me td{background:var(--warn-bg)}
     <button data-tab="roster" data-in="master">名簿</button>
     <button data-tab="skill" data-in="master">スキル</button>
     <button data-tab="settings" data-in="master">設定</button>
+    <button data-tab="help" data-in="master">使い方</button>
   </nav>
 </header>
 <main id="app"><div class="empty">読み込み中…</div></main>
@@ -791,7 +792,7 @@ function render(){
   S.deferRender=false;
   const tabs=document.getElementById('tabs'), who=document.getElementById('who');
   tabs.hidden=!S.role||(S.role==='staff'&&!S.me);
-  const GROUP={week:'stats',year:'stats',h28:'stats',paid:'stats',fare:'stats',emp:'stats',roster:'master',skill:'master',settings:'master'};
+  const GROUP={help:'master',week:'stats',year:'stats',h28:'stats',paid:'stats',fare:'stats',emp:'stats',roster:'master',skill:'master',settings:'master'};
   const grp=GROUP[S.tab]||null;
   document.querySelectorAll('#tabs button').forEach(b=>{
     b.hidden=S.role==='staff'?!['submit','final'].includes(b.dataset.tab):b.dataset.role==='staff';
@@ -813,7 +814,7 @@ function render(){
   if(window.LOCAL_MODE&&S.role==='manager'&&Object.keys(S.days).length){let lb='';try{lb=localStorage.getItem('shiftapp:lastBackup:'+S.store)||''}catch(_){}
     const ago=lb?Math.round((parse(today)-parse(lb))/864e5):null;
     if(ago==null||ago>=30)h+=`<div class="banner" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">データはこの端末だけに保存されています。${lb?`最後のバックアップから${ago}日たちました。`:'まだバックアップがありません。'}<button class="btn sm" data-act="exportBk">今すぐバックアップ</button></div>`}
-  h+=({req:vReq,paid:vPaid,year:vYear,skill:vSkill,submit:vSubmit,shift:vShift,final:vFinal,week:vWeek,roster:vRoster,emp:vEmp,h28:v28,fare:vFare,settings:vSettings}[S.tab])();
+  h+=({help:vHelp,req:vReq,paid:vPaid,year:vYear,skill:vSkill,submit:vSubmit,shift:vShift,final:vFinal,week:vWeek,roster:vRoster,emp:vEmp,h28:v28,fare:vFare,settings:vSettings}[S.tab])();
   app.innerHTML=h;
   const cv=document.getElementById('printCv');if(cv)drawPrint(cv);
   const g2=app.querySelector('.scroll'); if(g2&&gx!=null)g2.scrollLeft=gx; else if(g2&&S.tab==='shift'&&g2.dataset.init)g2.scrollLeft=g2.dataset.init;
@@ -923,13 +924,14 @@ async function submitWeek(){
 
 function subStatus(){
   const list=staffList().filter(s=>s.kind!=='社員');if(!list.length)return '';
-  const got=list.filter(s=>S.requests[s.id+'_'+S.week]);
-  const notes=got.map(s=>({s,r:S.requests[s.id+'_'+S.week]})).filter(x=>x.r.note);
-  return `<details${S.subOpen?' open':''} id="subDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">シフト提出状況 <span class="pill ${got.length===list.length?'good':'warn'}">${got.length}/${list.length}人</span></summary>
+  const dates=weekDates(S.week),has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
+  const got=list.filter(s=>has(s.id)||S.requests[s.id+'_'+S.week]);
+  const notes=list.map(s=>({s,r:S.requests[s.id+'_'+S.week]})).filter(x=>x.r&&x.r.note);
+  return `<details${S.subOpen?' open':''} id="subDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">希望の入力状況 <span class="pill ${got.length===list.length?'good':'warn'}">アルバイト ${got.length}/${list.length}人</span></summary>
     <div style="display:grid;gap:8px;margin-top:8px">
-    <div class="legend">${list.map(s=>{const r=S.requests[s.id+'_'+S.week];return `<span style="--pc:var(--${r?'good-bg':'sunk'});color:var(--${r?'good':'muted'})">${r?'✓':'未'} ${esc(s.name)}</span>`}).join('')}</div>
+    <div class="legend">${list.map(s=>{const ok=got.includes(s);return `<span style="--pc:var(--${ok?'good-bg':'sunk'});color:var(--${ok?'good':'muted'})">${ok?'✓':'未'} ${esc(s.name)}</span>`}).join('')}</div>
     ${notes.length?`<table class="t"><tbody>${notes.map(x=>`<tr><td style="white-space:nowrap;width:1%"><b>${esc(x.s.name)}</b></td><td>${esc(x.r.note)}</td></tr>`).join('')}</tbody></table>`:''}
-    <p class="hint">提出された希望はシフト表に自動で入り、名前の横に「提出」と表示されます。アルバイトさんは「アルバイト用パスワード」でログインして提出します。</p></div></details>`;
+    <p class="hint">「未」の人は、まだこの週の希望が入っていません。「希望入力」から入れてください。</p></div></details>`;
 }
 
 /* --- 入力タブ --- */
@@ -982,7 +984,7 @@ function vShift(){
       <button class="btn sm" data-act="autoPos" data-m="blank">ポジション（空欄だけ）</button>
       <button class="btn sm" data-act="autoPos" data-m="all">ポジション（全員やり直し）</button>
       <button class="btn sm" data-act="autoBrk">休憩を配置</button>
-      <span class="hint">「ポジション別人数」の理想人数と、スキルタブのレベル（リーダーを優先して1人ずつ配置）・過去の担当をもとに決めます。フリー・ヘルプの人はそのままです。</span></div>${undo}`:'';
+      <span class="hint">「ポジション別人数」の理想人数と、スキルのレベル（リーダーを優先して1人ずつ配置）・過去の担当をもとに決めます。フリー・ヘルプの人はそのままです。</span></div>${undo}`:'';
   return `<section class="panel" aria-label="週と日の選択">
     <div class="bar"><h2>シフト作成</h2>${weekNav()}
       <span style="margin-left:auto" class="bar"><button class="btn sm" data-act="genEmp" title="決め打ち→休み希望→最低社員数→週の出勤日数の順で作ります">社員シフトを自動作成</button><button class="btn sm" data-act="adj28">28時間を調整</button>${weekEmpty?`<button class="btn sm" data-act="copyWeek">前週をコピー</button>`:''}</span></div>
@@ -1015,7 +1017,7 @@ function vShift(){
       <span style="margin-left:auto" class="bar"><button class="btn sm ghost" data-act="clearDay">この日を空にする</button><button class="btn sm pri" data-act="addRow">＋ 行を追加</button></span></div>
     ${autobar}
     ${(d.shifts||[]).length?`<div class="scroll" data-init="${(st.peakFrom-8-2)*32}"><table class="grid"><thead>${head}</thead><tbody>${rows}</tbody><tfoot>${foot}</tfoot></table></div>`:
-      `<div class="empty">まだシフトがありません。「＋ 行を追加」で名前・開始・終了・ポジションを選ぶと、勤務・休憩・労働・深夜時間と人件費が自動で計算されます。${staffList().length?'':'<br>先に「名簿」タブでスタッフを登録してください。'}</div>
+      `<div class="empty">まだシフトがありません。「＋ 行を追加」で名前・開始・終了・ポジションを選ぶと、勤務・休憩・労働・深夜時間と人件費が自動で計算されます。${staffList().length?'':'<br>先に「マスタ → 名簿」でスタッフを登録してください。'}</div>
        <div class="scroll"><table class="grid"><thead>${head}</thead><tfoot>${foot}</tfoot></table></div>`}
     <div class="legend">${st.positions.map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>
   </section>
@@ -1208,6 +1210,33 @@ function vSkill(){
     <p class="hint">配置の考え方：①リーダーがいないポジションへリーダーを置く（リーダーが少ないポジションから）→ ②理想人数の不足をレベルが高い人から埋める（見習いは一人前以上がいる所へ）→ ③余った人は一番得意なポジションへ。</p></section>`;
 }
 
+/* --- 使い方 --- */
+function vHelp(){
+  const step=(n,t,b)=>`<li><b>${t}</b><div class="muted" style="margin-top:2px">${b}</div></li>`;
+  return `<section class="panel" style="max-width:860px"><h2>使い方</h2>
+    <h3>はじめに1回だけ（マスタ）</h3>
+    <ol style="display:grid;gap:10px;margin:0;padding-left:1.4em">
+      ${step(1,'名簿','スタッフ・時給・交通費を登録。留学生には「留学生」にチェック。一番下の「社員の勤務ルール」で週の出勤日数・基本の時間を決めます。')}
+      ${step(2,'スキル','ポジションごとのレベル（0できない〜3リーダー）。自動配置に使います。')}
+      ${step(3,'設定','目標人件費率・理想人件費（曜日別）、ポジション、休憩や残業のルール。')}
+    </ol>
+    <h3>毎週の流れ</h3>
+    <ol style="display:grid;gap:10px;margin:0;padding-left:1.4em">
+      ${step(1,'希望入力','LINEで届いた希望を、スタッフを選んで1週間分入れ「登録して次の人へ」。社員は「出勤（固定）＝決め打ち」「休み希望」。アルバイトも「固定」を押せば決め打ち。')}
+      ${step(2,'シフト作成','「社員シフトを自動作成」→ 各日の売上予算と時間ごとの理想人数を入れる →「週全体を目標に合わせる」→「28時間を調整」→「ポジション」「休憩を配置」。どれも「元に戻す」で取り消せます。')}
+      ${step(3,'希望との違い','シフト作成の下に、希望と確定が違う人と理由が出ます。「本人に送るLINE文をコピー」でそのまま連絡できます。')}
+      ${step(4,'完成シフト','日別・週間で確認。「A4印刷用」から印刷、またはPDFで保存。')}
+    </ol>
+    <h3>優先順位（自動作成・調整のルール）</h3>
+    <ol style="margin:0;padding-left:1.4em;display:grid;gap:4px">
+      <li>決め打ち（固定）は動かさない</li><li>社員の休み希望</li><li>留学生はどの連続7日間でも28時間以内（月をまたいでも）。28時間ギリギリまで入れる</li>
+      <li>時間帯ごとの理想人数を下回るカットはしない／ポジションを空にしない</li><li>目標人件費率に近づける（届かなければ止めて不足額を表示）</li>
+    </ol>
+    <h3>データについて</h3>
+    <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
+    <p class="hint" style="margin:0">バージョン ${'1.0'}</p></section>`;
+}
+
 /* --- 有給 --- */
 function vPaid(){
   const st=set(),list=staffList(true).filter(s=>s.active!==false);
@@ -1370,7 +1399,7 @@ function vWeek(){
     </div>
     <div class="scroll"><table class="t"><thead><tr><th>曜日</th><th class="r">売上予算</th><th class="r">人件費</th><th class="r">人件費率</th><th class="r">P/A人件費</th><th class="r">労働h</th><th class="r">人時生産性</th><th class="r">理想人件費</th><th class="r">比較（実績−理想）</th></tr></thead>
     <tbody>${rows}</tbody><tfoot><tr><td>計</td><td class="num">${yen(tb)}</td><td class="num">${yen(tc)}</td><td class="num">${tb?(tc/tb*100).toFixed(2)+'%':'—'}</td><td class="num">${yen(tp)}</td><td class="num">${n1(tl)}</td><td class="num">${tl?Math.round(tb/tl).toLocaleString():'—'}</td><td class="num">${yen(ti)}</td><td class="num ${over>0?'cell-bad':'cell-good'}">${over>0?'+':''}${yen(over).replace('¥-','-¥')}</td></tr></tfoot></table></div>
-    <p class="hint">比較がプラス（赤）は理想人件費を超えている日です。理想人件費は「設定」タブで曜日ごとに変えられます。</p></section>
+    <p class="hint">比較がプラス（赤）は理想人件費を超えている日です。理想人件費と目標人件費率は「マスタ → 設定」で曜日ごとに変えられます。</p></section>
   <section class="panel" style="max-width:560px"><div class="bar"><h2>月間見込み（曜日別）</h2></div>
     <div class="bar"><label class="field"><span>開始日</span><input type="date" id="ms" data-f="monthStart" value="${st.monthStart}"></label>
     <label class="field"><span>終了日</span><input type="date" id="me" data-f="monthEnd" value="${st.monthEnd}"></label></div>
@@ -1413,7 +1442,7 @@ function vRoster(){
   <p class="hint">時給・往復交通費を変えると、すべての画面の人件費と交通費に反映されます。辞めた人は「在籍」を外すとシフトの名前一覧から消えます（過去のシフトは残ります）。</p>
   ${list.length?`<div class="scroll"><table class="t"><thead><tr><th>#</th><th>スタッフ名</th><th>区分</th><th>時給</th><th>交通費（往復）</th>${dates.map(dt=>`<th class="r">${WD[wd(dt)]}</th>`).join('')}<th class="r">合計h</th><th class="r">金額</th><th class="r">交通費</th><th>スキル</th><th>対象</th><th></th></tr></thead>
   <tbody>${rows}</tbody><tfoot><tr><td colspan="5">日別人件費</td>${tot.map(v=>`<td class="num">${v?Math.round(v/1000)+'k':'0'}</td>`).join('')}<td></td><td class="num">${yen(tot.reduce((a,b)=>a+b,0))}</td><td colspan="4"></td></tr></tfoot></table></div>
-  <p class="hint">スキルは「スキル」タブで設定します。「留学生」にチェックした人は、連続7日間の労働時間が28時間を超えると警告が出ます。有給の時間は「有給」タブで管理します。</p>`:
+  <p class="hint">スキルは「マスタ → スキル」で設定します。「留学生」にチェックした人は、どの連続7日間でも労働時間が28時間を超えないかチェックされます。有給の時間は「集計 → 有給」で管理します。</p>`:
   `<div class="empty">スタッフが登録されていません。「＋ スタッフを追加」から名前・時給・交通費を入れてください。</div>`}</section>${empRules()}`;
 }
 
@@ -1429,7 +1458,7 @@ function vEmp(){
     return `<tr${m===S.week?' style="outline:2px solid var(--accent);outline-offset:-2px"':''}><td class="num">${md(m)}–${md(addDays(m,6))}</td>${cells}<td class="num">${st.border}</td></tr>`}).join('');
   return `<section class="panel"><div class="bar"><h2>社員勤務時間</h2><span class="hint">週（月〜日）の労働時間。ボーダー（${st.border}時間）未満は赤で表示</span></div>
   ${emps.length?`<div class="scroll"><table class="t"><thead><tr><th>週</th>${emps.map(e=>`<th class="r">${esc(e.name)}</th>`).join('')}<th class="r">ボーダー</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty">名簿に「社員」区分のスタッフがいません。</div>'}
-  <p class="hint">期間は「週間・月間管理」タブの月間見込みの開始日〜終了日に合わせています。ボーダーは「設定」で変更できます。</p></section>`;
+  <p class="hint">期間は「集計 → 週間・月間」の月間見込みの開始日〜終了日に合わせています。ボーダーは「マスタ → 設定」で変更できます。</p></section>`;
 }
 
 /* --- 28h --- */
@@ -1501,7 +1530,7 @@ function vSettings(){
   <section class="panel"><h2>目標人件費率・理想人件費（曜日別）</h2>
     <table class="t"><thead><tr><th>曜日</th><th>目標人件費率（%）</th><th>理想人件費（円）</th></tr></thead><tbody>${[1,2,3,4,5,6,0].map(w=>`<tr><td>${WD[w]}</td><td><input type="number" step="0.5" min="0" max="100" id="tr${w}" data-tr="${w}" value="${(st.targetRate||{})[w]??22}"></td><td><input type="number" step="1000" id="ic${w}" data-ideal="${w}" value="${st.idealCost[w]||0}"></td></tr>`).join('')}</tbody></table>
     <div class="bar">${num('minShift','調整後も残す最短勤務（h）',0.5)}<label style="font-size:13px"><input type="checkbox" id="adjEmp"${st.adjustEmployees?' checked':''}> 社員も調整の対象にする</label></div>
-    <p class="hint">入力タブの「目標に合わせる」は、売上予算×目標人件費率を上限に、時間帯ごとの理想人数を下回らない範囲でだけ勤務を短くします。</p></section>
+    <p class="hint">「シフト作成」の「目標に合わせる」は、売上予算×目標人件費率を上限に、時間帯ごとの理想人数を下回らない範囲でだけ勤務を短くします。</p></section>
   <section class="panel"><h2>計算ルール</h2>
     <div class="kpis">${num('border','社員ボーダー（週h）',0.5)}${num('limit28','28h管理の上限（h）',0.5)}
     ${num('brk1At','休憩1：勤務がこの時間以上',0.5)}${num('brk1','→ 休憩（h）',0.25)}${num('brk2Over','休憩2：勤務がこの時間超',0.5)}${num('brk2','→ 休憩（h）',0.25)}
@@ -1619,7 +1648,7 @@ app.addEventListener('click',e=>{
     if(!n&&!(r.noFit||[]).length){toast(a==='autoPos'?'割り振る対象の行がありません（時間が入っていて、ポジションが空欄の行が対象です）':'休憩が必要な人がいません');return}
     const extra=a==='autoPos'?[noIdeal?'理想人数が未入力のため、スキルと過去の担当をもとにしています。':'',
       r.short.length?`まだ足りません：${r.short.join('、')}。`:'',r.noLead.length?`リーダー不在：${r.noLead.join('、')}。`:'',
-      r.noFit.length?`できるポジションがない人：${r.noFit.join('、')}（スキルタブで設定してください）。`:''].join(''):'';
+      r.noFit.length?`できるポジションがない人：${r.noFit.join('、')}（マスタ → スキルで設定してください）。`:''].join(''):'';
     S.undo={date,shifts:before,msg:a==='autoPos'?`${n}人のポジションをスキルに合わせて割り振りました。${extra}`:`${n}人の休憩を、人数に余裕のある時間帯に配置しました。`};
     saveDay(date);return render()}
   if(a==='undo'&&S.undo){if(S.undo.multi){for(const [dt,sh] of S.undo.multi){ensureDay(dt).shifts=sh;saveDay(dt)}}else{const d=ensureDay(S.undo.date);d.shifts=S.undo.shifts;saveDay(S.undo.date)}S.undo=null;toast('元に戻しました');return render()}
@@ -1686,7 +1715,7 @@ function remember(){try{localStorage.setItem('shiftapp:view',JSON.stringify({tab
   S.week=def; S.dayIdx=0; S.tab='req';
   try{S.me=localStorage.getItem('shiftapp:me')||''}catch(_){}
   try{const v=JSON.parse(localStorage.getItem('shiftapp:view')||'null');if(v){S.tab=v.tab||S.tab;S.week=v.week||def;S.dayIdx=v.dayIdx||0}}catch(_){}
-  const h=(location.hash||'').slice(1);if(['req','paid','year','skill','shift','final','week','roster','emp','h28','fare','settings'].includes(h))S.tab=h;
+  const h=(location.hash||'').slice(1);if(['help','req','paid','year','skill','shift','final','week','roster','emp','h28','fare','settings'].includes(h))S.tab=h;
 })();
 render();
 try{document.fonts?.ready.then(()=>{if(S.tab==="final"&&S.finalMode==="print")render()})}catch(_){}
@@ -1695,7 +1724,7 @@ try{document.fonts?.ready.then(()=>{if(S.tab==="final"&&S.finalMode==="print")re
   if(!window.firebase){S.live=false;render();return}
   try{firebase.initializeApp(window.LOCAL_MODE?{}:window.FIREBASE_CONFIG)}catch(e){S.live=false;render();return}
   if(window.LOCAL_MODE){try{navigator.storage?.persist?.()}catch(_){}
-    window.addEventListener('localdb-error',()=>{toast('この端末の保存容量がいっぱいです。設定タブからバックアップを書き出してください');status('err')})}
+    window.addEventListener('localdb-error',()=>{toast('この端末の保存容量がいっぱいです。マスタ → 設定 からバックアップを書き出してください');status('err')})}
   if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
   const db=firebase.firestore();
   try{db.enablePersistence({synchronizeTabs:true}).catch(()=>{})}catch(_){}
