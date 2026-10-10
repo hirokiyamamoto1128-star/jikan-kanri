@@ -218,6 +218,15 @@ table.wk tr.me td{background:var(--warn-bg)}
 table.wk tr.emp td.nm{background:var(--emp-bg);color:var(--ink)}
 table.wk tr.sep td{background:var(--sunk);font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.08em;padding:3px 8px}
 .tagemp{display:inline-block;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:3px;vertical-align:middle;background:var(--ink);color:var(--surface)}
+.smx{border-collapse:separate;border-spacing:2px;font-size:11px}
+.smx th{font-weight:700;color:var(--muted);font-family:var(--f-num);padding:0 2px;text-align:left;white-space:nowrap}
+.smx th.pn{text-align:right;padding-right:8px;font-family:var(--f-body);color:var(--fg);position:sticky;left:0;background:var(--surface);z-index:1}
+.smx td{width:26px;min-width:26px;height:26px;text-align:center;border-radius:3px;font-family:var(--f-num);font-weight:700;padding:0}
+.smx td.na{background:transparent}
+.smx td.ok{background:var(--good-bg);color:var(--good);font-weight:400;opacity:.8}
+.smx td.ng{background:var(--bad);color:var(--surface)}
+.smx td.ng1{background:var(--bad-bg);color:var(--bad);box-shadow:inset 0 0 0 1px var(--bad)}
+.smx tr.tot th.pn,.smx tr.tot td{border-top:2px solid var(--line)}
 .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
 .who .role{padding:2px 8px;border-radius:999px;background:var(--sunk)}
 .who .role.mgr{background:var(--accent);color:var(--accent-fg)}
@@ -641,6 +650,25 @@ function shortages(date){
     else merged.push({...it,minHave:it.have,maxNeed:it.need})}
   const posH=merged.filter(x=>x.kind==='pos').reduce((a,x)=>a+x.lack,0),totalH=merged.filter(x=>x.kind==='total').reduce((a,x)=>a+x.lack,0);
   return {ready:true,items:merged,posH,totalH};
+}
+// 時間帯×ポジションの早見表（30分ごと）
+function shortMatrix(date){
+  const st=set(),d=dayDoc(date),ideal=(d.ideal||[]).map(Number);
+  if(!ideal.some(v=>v>0))return '';
+  const {n,pos}=slotState(d),open=k=>ideal[Math.floor(k/2)]>0,peak=k=>{const h=8+Math.floor(k/2);return h>=st.peakFrom&&h<st.peakTo};
+  let k0=48,k1=-1;for(let k=0;k<48;k++)if(open(k)){k0=Math.min(k0,k);k1=Math.max(k1,k)}
+  if(k1<0)return '';
+  const rows=[];
+  for(const p of set().positions.map(x=>x.name)){const want=Number((d.posIdeal||{})[p])||0;if(!want||posInfo(p)?.kind!=='work')continue;
+    rows.push({label:p,need:k=>open(k)?(peak(k)?want:1):0,have:k=>pos[k][p]||0})}
+  rows.push({label:'全体',tot:true,need:k=>Math.ceil(ideal[Math.floor(k/2)]||0),have:k=>n[k]});
+  const ks=[];for(let k=k0;k<=k1;k++)ks.push(k);
+  const head=`<tr><th class="pn"></th>${ks.map(k=>k%2===0?`<th colspan="2">${(8+k/2)>=24?8+k/2-24:8+k/2}時</th>`:(k===k0?'<th></th>':'')).join('')}</tr>`;
+  const body=rows.map(r=>`<tr class="${r.tot?'tot':''}"><th class="pn">${r.tot?'<b>全体</b>':`<span class="legend"><span style="${posStyle(r.label)}">${esc(short(r.label))}</span></span>`}</th>${ks.map(k=>{const need=r.need(k),have=r.have(k),lack=need-have;
+    const t=`${tLabel(8+k/2)}–${tLabel(8+k/2+0.5)} ${r.tot?'全体':r.label}：${have}人／必要${need}人`;
+    return need<=0?`<td class="na" title="${t}"></td>`:lack>0?`<td class="${lack>=2?'ng':'ng1'}" title="${t}">−${lack}</td>`:`<td class="ok" title="${t}">${have}</td>`}).join('')}</tr>`).join('');
+  return `<div class="scroll" style="border:0;padding:4px 0"><table class="smx" aria-label="時間帯ごとのポジション別不足">${head}${body}</table></div>
+    <div class="legend" style="font-size:11px"><span style="--pc:var(--bad);color:var(--surface)">−2 以上 不足</span><span style="--pc:var(--bad-bg);color:var(--bad)">−1 不足</span><span style="--pc:var(--good-bg);color:var(--good)">足りている（数字は人数）</span><span style="--pc:var(--sunk);color:var(--muted)">空白：営業時間外・判定なし</span></div>`;
 }
 function shortHtml(date,title){
   const R=shortages(date);
@@ -1119,7 +1147,7 @@ function vShift(){
       `<div class="empty">まだシフトがありません。「＋ 行を追加」で名前・開始・終了・ポジションを選ぶと、勤務・休憩・労働・深夜時間と人件費が自動で計算されます。${staffList().length?'':'<br>先に「マスタ → 名簿」でスタッフを登録してください。'}</div>
        <div class="scroll"><table class="grid"><thead>${head}</thead><tfoot>${foot}</tfoot></table></div>`}
     ${offLine}
-    ${(d.shifts||[]).length?`<details${S.shortOpen?' open':''} id="shortDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">不足ポジション・不足時間 ${(()=>{const R=shortages(date);return R.ready?(R.items.length?`<span class="pill bad">${n1(R.posH)}人時</span>`:'<span class="pill good">なし</span>'):''})()}</summary><div style="margin-top:8px">${shortHtml(date)}</div></details>`:''}
+    ${(d.shifts||[]).length?`<details${S.shortOpen?' open':''} id="shortDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">どの時間帯に、どのポジションが足りないか ${(()=>{const R=shortages(date);return R.ready?(R.items.length?`<span class="pill bad">${n1(R.posH)}人時</span>`:'<span class="pill good">なし</span>'):''})()}</summary><div style="margin-top:8px;display:grid;gap:8px">${shortMatrix(date)}${shortHtml(date)}</div></details>`:''}
     <div class="legend">${st.positions.map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>
   </section>
   ${(()=>{const xs=weekDiffs();if(!xs.length)return '';
@@ -1301,7 +1329,8 @@ function vFinal(){
         ${d.memo?`<p style="margin:0;font-weight:700">メモ：${esc(d.memo)}</p>`:''}
         <div class="scroll" style="padding:10px;border:0"><div class="gantt">${head}${rows}${cov}</div></div>
         ${off.length?`<p class="hint">休み：${off.map(sh=>`${esc(S.staff[sh.sid].name)}（${esc(sh.pos)}）`).join('、')}</p>`:''}
-        <section style="border-top:1px solid var(--line);padding-top:10px;display:grid;gap:6px"><h3 style="font-size:14px;color:var(--fg)">不足ポジション・不足時間</h3>${shortHtml(date)}
+        <section style="border-top:1px solid var(--line);padding-top:10px;display:grid;gap:8px"><h3 style="font-size:14px;color:var(--fg)">どの時間帯に、どのポジションが足りないか</h3>${shortMatrix(date)}
+          <details${S.shortListOpen?' open':''} id="shortListDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">時間帯の一覧と不足時間</summary><div style="margin-top:6px">${shortHtml(date)}</div></details>
           <p class="hint" style="margin:0">ポジション別：ピーク帯（${st.peakFrom}〜${st.peakTo}時）は「ポジション別人数」の理想人数、それ以外の営業時間は最低1人で判定。全体：時間帯ごとの理想人数との差。休憩中・ヘルプ（他店）は数えません。</p></section>
         <div class="legend">${st.positions.filter(p=>p.kind!=='off').map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>`;
     }
@@ -1432,7 +1461,7 @@ function vHelp(){
     </ol>
     <h3>データについて</h3>
     <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
-    <p class="hint" style="margin:0">バージョン ${'1.4'}</p></section>`;
+    <p class="hint" style="margin:0">バージョン ${'1.5'}</p></section>`;
 }
 
 /* --- 有給 --- */
@@ -1951,7 +1980,7 @@ app.addEventListener('change',e=>{if(e.target.id!=='importFile')return;const f=e
   f.text().then(t=>{let d;try{d=JSON.parse(t)}catch(_){return toast('ファイルを読めませんでした')}
     if(d.format!=='shift-app-backup')return toast('このアプリのバックアップファイルではありません');
     S.importInfo={data:d,msg:`「${d.store?.name||''}」のバックアップ（スタッフ${(d.staff||[]).length}人・${Object.keys(d.days||{}).length}日分）を、今の店舗「${S.stores[S.store]?.name||''}」に取り込みます。`};render()})});
-app.addEventListener('toggle',e=>{if(e.target.id==='subDet')S.subOpen=e.target.open;if(e.target.id==='createDet')S.createOpen=e.target.open;if(e.target.id==='bulkDet')S.bulkOpen=e.target.open;if(e.target.id==='shortDet')S.shortOpen=e.target.open},true);
+app.addEventListener('toggle',e=>{if(e.target.id==='subDet')S.subOpen=e.target.open;if(e.target.id==='createDet')S.createOpen=e.target.open;if(e.target.id==='bulkDet')S.bulkOpen=e.target.open;if(e.target.id==='shortDet')S.shortOpen=e.target.open;if(e.target.id==='shortListDet')S.shortListOpen=e.target.open},true);
 document.getElementById('who').addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;
   if(b.dataset.act==='logout')logout();
   if(b.dataset.act==='changeMe'){S.me='';try{localStorage.removeItem('shiftapp:me:'+S.store)}catch(_){};S.draft=null;render()}});
