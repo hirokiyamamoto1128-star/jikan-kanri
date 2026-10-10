@@ -621,6 +621,39 @@ function slotState(d){
   return {n,pos};
 }
 function weekHours(sid,date){return weekDates(monday(date)).reduce((a,dt)=>a+laborOf(dt,sid),0)}
+/* 不足の算出：ポジション別（ピーク帯は理想人数、それ以外の営業時間は最低1人）と全体（時間帯ごとの理想人数） */
+const short=s0=>s0.replace(/\/.*/,'');
+function shortages(date){
+  const st=set(),d=dayDoc(date),ideal=(d.ideal||[]).map(Number);
+  if(!ideal.some(v=>v>0))return {ready:false,items:[],posH:0,totalH:0};
+  const {n,pos}=slotState(d),items=[];
+  const open=k=>ideal[Math.floor(k/2)]>0,peak=k=>{const h=8+Math.floor(k/2);return h>=st.peakFrom&&h<st.peakTo};
+  const scan=(needAt,haveAt,meta)=>{let cur=null;const flush=k=>{if(cur){cur.to=8+k/2;items.push(cur);cur=null}};
+    for(let k=0;k<48;k++){const need=needAt(k),have=haveAt(k);
+      if(need>have){if(cur&&cur.need===need&&cur.have===have){cur.lack+=(need-have)/2}else{flush(k);cur={...meta,from:8+k/2,need,have,lack:(need-have)/2}}}else flush(k)}
+    flush(48)};
+  for(const [p,v] of Object.entries(d.posIdeal||{})){const want=Number(v)||0;if(!want||posInfo(p)?.kind!=='work')continue;
+    scan(k=>open(k)?(peak(k)?want:1):0,k=>pos[k][p]||0,{kind:'pos',pos:p})}
+  scan(k=>Math.ceil(ideal[Math.floor(k/2)]||0),k=>n[k],{kind:'total',pos:'全体'});
+  // 同じポジションで隣り合う範囲をまとめる（人数が違っても連続していれば1件に）
+  const merged=[];for(const it of items){const last=merged[merged.length-1];
+    if(last&&last.kind===it.kind&&last.pos===it.pos&&Math.abs(last.to-it.from)<1e-9){last.to=it.to;last.lack+=it.lack;last.minHave=Math.min(last.minHave,it.have);last.maxNeed=Math.max(last.maxNeed,it.need)}
+    else merged.push({...it,minHave:it.have,maxNeed:it.need})}
+  const posH=merged.filter(x=>x.kind==='pos').reduce((a,x)=>a+x.lack,0),totalH=merged.filter(x=>x.kind==='total').reduce((a,x)=>a+x.lack,0);
+  return {ready:true,items:merged,posH,totalH};
+}
+function shortHtml(date,title){
+  const R=shortages(date);
+  if(!R.ready)return `<p class="hint" style="margin:0">${title?title+'：':''}時間帯ごとの理想人数が入っていないため、不足は計算できません（シフト作成で入力）。</p>`;
+  if(!R.items.length)return `<p style="margin:0"><span class="pill good">不足なし</span>${title?` <span class="muted">${title}</span>`:''}</p>`;
+  const row=x=>`<tr><td style="white-space:nowrap">${x.kind==='total'?'<b>全体</b>':`<span class="legend"><span style="${posStyle(x.pos)}">${esc(x.pos)}</span></span>`}</td><td class="num" style="white-space:nowrap">${tLabel(x.from)}–${tLabel(x.to)}</td><td class="num">${x.minHave===x.maxNeed?'':`${x.minHave}人 / 必要${x.maxNeed}人`}</td><td class="num cell-bad">${n1(x.lack)}人時</td></tr>`;
+  return `<div style="display:grid;gap:6px">${title?`<b>${title}</b>`:''}<div class="bar"><span class="pill bad">ポジション不足 ${n1(R.posH)}人時</span><span class="pill ${R.totalH?'bad':'good'}">全体の不足 ${n1(R.totalH)}人時</span></div>
+    <div class="scroll"><table class="t"><thead><tr><th>ポジション</th><th class="r">時間</th><th class="r">いる人数 / 必要</th><th class="r">不足</th></tr></thead><tbody>${R.items.map(row).join('')}</tbody></table></div></div>`;
+}
+function shortText(date){const R=shortages(date);if(!R.ready)return '';if(!R.items.length)return '不足なし';
+  const by={};for(const x of R.items)if(x.kind==='pos')by[x.pos]=(by[x.pos]||0)+x.lack;
+  return Object.entries(by).map(([p,h])=>`${short(p).replace('たこ焼き','たこ焼')} ${n1(h)}h`).concat(R.totalH?[`全体 ${n1(R.totalH)}h`]:[]).join(' / ')}
+
 function hourCover(d){const {n,pos}=slotState(d);return {H:Array.from({length:24},(_,h)=>(n[2*h]+n[2*h+1])/2),pos}}
 function adjustDay(date){
   const st=set(),d=ensureDay(date),ideal=(d.ideal||[]).map(Number),budget=Number(d.budget)||0,rate=targetRateOf(date);
@@ -1086,6 +1119,7 @@ function vShift(){
       `<div class="empty">まだシフトがありません。「＋ 行を追加」で名前・開始・終了・ポジションを選ぶと、勤務・休憩・労働・深夜時間と人件費が自動で計算されます。${staffList().length?'':'<br>先に「マスタ → 名簿」でスタッフを登録してください。'}</div>
        <div class="scroll"><table class="grid"><thead>${head}</thead><tfoot>${foot}</tfoot></table></div>`}
     ${offLine}
+    ${(d.shifts||[]).length?`<details${S.shortOpen?' open':''} id="shortDet"><summary style="cursor:pointer;font-weight:700;font-size:13px">不足ポジション・不足時間 ${(()=>{const R=shortages(date);return R.ready?(R.items.length?`<span class="pill bad">${n1(R.posH)}人時</span>`:'<span class="pill good">なし</span>'):''})()}</summary><div style="margin-top:8px">${shortHtml(date)}</div></details>`:''}
     <div class="legend">${st.positions.map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>
   </section>
   ${(()=>{const xs=weekDiffs();if(!xs.length)return '';
@@ -1128,8 +1162,9 @@ function drawPrint(cv){
   const nEmp=ids.filter(isEmp).length;
   const memos=dates.map(dt=>[dayDoc(dt).note,dayDoc(dt).memo].filter(Boolean).join(' / '));
   const hasMemo=memos.some(Boolean);
-  const top=M+160,nameW=270,dayW=(W-2*M-nameW)/7,headH=120,footH=64,memoH=hasMemo?170:0;
-  const avail=H-M-top-headH-footH-memoH;
+  const shorts=dates.map(dt=>shortText(dt)),hasShort=shorts.some(t=>t&&t!=='不足なし');
+  const top=M+160,nameW=270,dayW=(W-2*M-nameW)/7,headH=120,footH=64,memoH=hasMemo?170:0,shortH=hasShort?150:0;
+  const avail=H-M-top-headH-footH-memoH-shortH;
   const rowH=Math.max(44,Math.min(112,avail/Math.max(ids.length,1)));
   const X=i=>M+nameW+dayW*i;
   // 見出し
@@ -1162,14 +1197,18 @@ function drawPrint(cv){
   ctx.fillStyle='#ebe7de';ctx.fillRect(M,yEnd,W-2*M,footH);ctx.fillStyle='#1d1b16';ctx.font=font(28,1);ctx.textAlign='center';
   ctx.fillText('出勤人数',M+nameW/2,yEnd+footH/2);
   dates.forEach((dt,i)=>ctx.fillText(`${(dayDoc(dt).shifts||[]).filter(sh=>calcShift(sh).on).length}人`,X(i)+dayW/2,yEnd+footH/2));
+  // 不足
+  if(hasShort){const y0=yEnd+footH;ctx.fillStyle='#f8dcd8';ctx.fillRect(M,y0,nameW,shortH);ctx.fillStyle='#b3261e';ctx.font=font(28,1);ctx.textAlign='center';ctx.fillText('不足',M+nameW/2,y0+shortH/2);
+    dates.forEach((dt,i)=>{const t=shorts[i];if(!t)return;ctx.textAlign='left';ctx.fillStyle=t==='不足なし'?'#2f7a4a':'#b3261e';
+      wrap(t.split(' / ').join('／'),dayW-24,22).slice(0,4).forEach((ln,k)=>{ctx.font=font(22);ctx.fillText(ln,X(i)+12,y0+26+k*30)})})}
   // メモ
-  if(hasMemo){const y0=yEnd+footH;ctx.font=font(28,1);ctx.fillText('メモ',M+nameW/2,y0+memoH/2);
+  if(hasMemo){const y0=yEnd+footH+shortH;ctx.font=font(28,1);ctx.fillText('メモ',M+nameW/2,y0+memoH/2);
     dates.forEach((dt,i)=>{if(!memos[i])return;ctx.textAlign='left';ctx.fillStyle='#1d1b16';
       wrap(memos[i],dayW-24,24).slice(0,5).forEach((ln,k)=>{ctx.font=font(24);ctx.fillText(ln,X(i)+12,y0+28+k*30)})})}
   // 罫線
-  const yB=yEnd+footH+memoH;ctx.strokeStyle='#8a8478';ctx.lineWidth=2;ctx.strokeRect(M,top,W-2*M,yB-top);
+  const yB=yEnd+footH+shortH+memoH;ctx.strokeStyle='#8a8478';ctx.lineWidth=2;ctx.strokeRect(M,top,W-2*M,yB-top);
   ctx.beginPath();for(let i=0;i<7;i++){ctx.moveTo(X(i),top);ctx.lineTo(X(i),yB)}
-  for(const y of [top+headH,yEnd,yEnd+footH]){ctx.moveTo(M,y);ctx.lineTo(W-M,y)}ctx.stroke();
+  for(const y of [top+headH,yEnd,yEnd+footH,yEnd+footH+shortH]){ctx.moveTo(M,y);ctx.lineTo(W-M,y)}ctx.stroke();
   ctx.strokeStyle='#d6d0c3';ctx.lineWidth=1;ctx.beginPath();for(let r=1;r<ids.length;r++){const y=top+headH+rowH*r;ctx.moveTo(M,y);ctx.lineTo(W-M,y)}ctx.stroke();
   if(nEmp&&nEmp<ids.length){const y=top+headH+rowH*nEmp;ctx.strokeStyle='#1f3a5c';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(M,y);ctx.lineTo(W-M,y);ctx.stroke()}
   if(!ids.length){ctx.fillStyle='#6b655a';ctx.textAlign='center';ctx.font=font(36);ctx.fillText('この週のシフトはまだありません',W/2,top+headH+80)}
@@ -1229,7 +1268,8 @@ function vFinal(){
       return `<td class="sh" style="${posStyle(sh.pos)}"><div class="tm">${tLabel(sh.start)}–${tLabel(sh.end)}</div>${sh.pos?`<span class="ps">${esc(sh.pos)}${isHelp(sh.pos)&&sh.helpTo?`→${esc(sh.helpTo)}`:''}</span>`:''}</td>`}).join('')}</tr>`}).join('');
     const cnt=dates.map(dt=>(dayDoc(dt).shifts||[]).filter(sh=>calcShift(sh).on).length);
     body=ids.length?`<div class="scroll"><table class="t wk"><thead><tr><th class="nm" style="position:sticky;left:0;z-index:2">名前</th>${dates.map(dt=>{const w=wd(dt),n=dayDoc(dt).note;return `<th><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}${n?`<div style="font-weight:400">${esc(n)}</div>`:''}</th>`}).join('')}</tr></thead>
-      <tbody>${rows}</tbody><tfoot><tr><td class="nm">出勤人数</td>${cnt.map(c=>`<td class="num">${c}人</td>`).join('')}</tr></tfoot></table></div>`:
+      <tbody>${rows}</tbody><tfoot><tr><td class="nm">出勤人数</td>${cnt.map(c=>`<td class="num">${c}人</td>`).join('')}</tr>
+      <tr><td class="nm">不足</td>${dates.map(dt=>{const R=shortages(dt);return `<td style="font-size:11px;vertical-align:top;${R.ready&&R.items.length?'color:var(--bad)':''}">${!R.ready?'<span class="muted">—</span>':!R.items.length?'<span class="cell-good">なし</span>':R.items.filter(x=>x.kind==='pos').map(x=>`<div>${esc(short(x.pos))} ${tLabel(x.from)}–${tLabel(x.to)}</div>`).join('')+(R.totalH?`<div><b>全体 ${n1(R.totalH)}人時</b></div>`:'')}</td>`}).join('')}</tr></tfoot></table></div>`:
       '<div class="empty">この週のシフトはまだありません。</div>';
   }else{
     const date=dates[S.dayIdx], d=dayDoc(date), C=calcDay(date);
@@ -1261,6 +1301,8 @@ function vFinal(){
         ${d.memo?`<p style="margin:0;font-weight:700">メモ：${esc(d.memo)}</p>`:''}
         <div class="scroll" style="padding:10px;border:0"><div class="gantt">${head}${rows}${cov}</div></div>
         ${off.length?`<p class="hint">休み：${off.map(sh=>`${esc(S.staff[sh.sid].name)}（${esc(sh.pos)}）`).join('、')}</p>`:''}
+        <section style="border-top:1px solid var(--line);padding-top:10px;display:grid;gap:6px"><h3 style="font-size:14px;color:var(--fg)">不足ポジション・不足時間</h3>${shortHtml(date)}
+          <p class="hint" style="margin:0">ポジション別：ピーク帯（${st.peakFrom}〜${st.peakTo}時）は「ポジション別人数」の理想人数、それ以外の営業時間は最低1人で判定。全体：時間帯ごとの理想人数との差。休憩中・ヘルプ（他店）は数えません。</p></section>
         <div class="legend">${st.positions.filter(p=>p.kind!=='off').map(p=>`<span style="${posStyle(p.name)}">${esc(p.name)}</span>`).join('')}<span style="--pc:var(--brk);color:var(--bg)">休憩</span></div>`;
     }
   }
@@ -1390,7 +1432,7 @@ function vHelp(){
     </ol>
     <h3>データについて</h3>
     <p style="margin:0">${window.LOCAL_MODE?'データはこの端末のブラウザに保存されます。ページを更新しても消えません。ブラウザの閲覧データを削除すると消えるので、月に1回「マスタ → 設定 → バックアップを書き出す」をしてください。別の端末に移すときも、このバックアップを取り込みます。':'データはクラウド（Firebase）に保存され、スマホとPCで同じ内容が見られます。念のため月に1回バックアップを書き出してください。'}</p>
-    <p class="hint" style="margin:0">バージョン ${'1.3'}</p></section>`;
+    <p class="hint" style="margin:0">バージョン ${'1.4'}</p></section>`;
 }
 
 /* --- 有給 --- */
@@ -1909,7 +1951,7 @@ app.addEventListener('change',e=>{if(e.target.id!=='importFile')return;const f=e
   f.text().then(t=>{let d;try{d=JSON.parse(t)}catch(_){return toast('ファイルを読めませんでした')}
     if(d.format!=='shift-app-backup')return toast('このアプリのバックアップファイルではありません');
     S.importInfo={data:d,msg:`「${d.store?.name||''}」のバックアップ（スタッフ${(d.staff||[]).length}人・${Object.keys(d.days||{}).length}日分）を、今の店舗「${S.stores[S.store]?.name||''}」に取り込みます。`};render()})});
-app.addEventListener('toggle',e=>{if(e.target.id==='subDet')S.subOpen=e.target.open;if(e.target.id==='createDet')S.createOpen=e.target.open;if(e.target.id==='bulkDet')S.bulkOpen=e.target.open},true);
+app.addEventListener('toggle',e=>{if(e.target.id==='subDet')S.subOpen=e.target.open;if(e.target.id==='createDet')S.createOpen=e.target.open;if(e.target.id==='bulkDet')S.bulkOpen=e.target.open;if(e.target.id==='shortDet')S.shortOpen=e.target.open},true);
 document.getElementById('who').addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;
   if(b.dataset.act==='logout')logout();
   if(b.dataset.act==='changeMe'){S.me='';try{localStorage.removeItem('shiftapp:me:'+S.store)}catch(_){};S.draft=null;render()}});
