@@ -1,6 +1,6 @@
 // シフト表をネットなしでも開けるようにするためのファイル。
 // アプリを更新したら VERSION の数字を1つ上げてください。
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'shift-app-' + VERSION;
 const APP = ['./', './index.html', './local-db.js', './firebase-config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
