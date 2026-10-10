@@ -194,6 +194,8 @@ table.wk tr.me td{background:var(--warn-bg)}
 @media (max-width:760px){.reqwrap{grid-template-columns:1fr}.reqlist{display:none}.reqpick{display:grid}}
 @media (max-width:480px){nav.tabs{padding-inline:8px}nav.tabs button{padding:8px 8px 10px;font-size:13px}}
 .pin{border:1px solid var(--line);background:var(--surface);color:var(--muted);font:inherit;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:2px;cursor:pointer;vertical-align:middle}
+.pin:not(.on){border-style:dashed;opacity:.55;font-weight:400}
+.pin:not(.on):hover{opacity:1}
 .pin.on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
 .tagnew{display:inline-block;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:3px;vertical-align:middle;background:var(--good);color:var(--surface)}
 .score{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;align-items:center}
@@ -860,7 +862,7 @@ function render(){
   h+=({eval:vEval,help:vHelp,req:vReq,paid:vPaid,year:vYear,skill:vSkill,submit:vSubmit,shift:vShift,final:vFinal,week:vWeek,roster:vRoster,emp:vEmp,h28:v28,fare:vFare,settings:vSettings}[S.tab])();
   app.innerHTML=h;
   const cv=document.getElementById('printCv');if(cv)drawPrint(cv);
-  const g2=app.querySelector('.scroll'); if(g2&&gx!=null)g2.scrollLeft=gx; else if(g2&&S.tab==='shift'&&g2.dataset.init)g2.scrollLeft=g2.dataset.init;
+  const g2=app.querySelector('.scroll'); if(g2&&gx!=null)g2.scrollLeft=gx; else if(g2&&S.tab==='shift'&&g2.dataset.init&&window.innerWidth<1100)g2.scrollLeft=g2.dataset.init;
   window.scrollTo(sx,sy);
   status();
 }
@@ -1000,7 +1002,7 @@ function vShift(){
       cells+=`<td class="c${k%2===0?' h':''}${on?(br?' brk':' on'):''}" data-act="brk" data-i="${i}" data-t="${t}" title="${tLabel(t)}${on?(br?' 休憩':' — タップで休憩をここへ'):''}"></td>`}
     const nm=S.staff[sh.sid];
     return `<tr style="${posStyle(sh.pos)}">
-      <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${newTag(S.staff[sh.sid])}${sh.sid&&c.on?`<button class="pin${sh.pin?' on':''}" data-act="pin" data-i="${i}" title="${sh.pin?'決め打ち中：自動作成・調整で動かしません（押すと解除）':'押すと決め打ち（自動作成・調整で動かさない）'}">${sh.pin?'固定':'固定'}</button>`:''}${sh.gen&&!sh.pin?'<span class="subtag" style="background:var(--ink)" title="社員シフトの自動作成で入れた行">自動</span>':''}${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
+      <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${newTag(S.staff[sh.sid])}${sh.sid&&c.on?`<button class="pin${sh.pin?' on':''}" data-act="pin" data-i="${i}" title="${sh.pin?'決め打ち中：自動作成・調整で動かしません（押すと解除）':'押すと決め打ち（自動作成・調整で動かさない）'}">${sh.pin?'固定':'固定する'}</button>`:''}${sh.gen&&!sh.pin?'<span class="subtag" style="background:var(--ink)" title="社員シフトの自動作成で入れた行">自動</span>':''}${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
       ${sh.pos===PAID?`<td colspan="2" style="white-space:nowrap;padding:0 4px"><input type="number" step="0.5" min="0" max="12" data-f="paidH" data-i="${i}" value="${sh.paidH??''}" style="width:64px" aria-label="有給の時間"> h</td>`:
       `<td><select class="t" data-f="start" data-i="${i}" aria-label="開始">${tOptions(sh.start,8,31.5)}</select></td>
       <td><select class="t" data-f="end" data-i="${i}" aria-label="終了">${tOptions(sh.end,8.5,32)}</select></td>`}
