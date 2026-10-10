@@ -16,6 +16,9 @@
       catch (e) { saveErr = e; console.error('保存できませんでした', e); window.dispatchEvent(new CustomEvent('localdb-error')); }
     }, 150);
   }
+  // すぐに書き込む（画面を閉じる直前などに呼ばれる）
+  window.__localFlush = function () { if (saveT) { clearTimeout(saveT); saveT = null; } try { localStorage.setItem(KEY, JSON.stringify({ store, users, savedAt: new Date().toISOString() })); } catch (_) {} };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveT) window.__localFlush(); });
   window.addEventListener('pagehide', () => { if (saveT) { clearTimeout(saveT); saveT = null; try { localStorage.setItem(KEY, JSON.stringify({ store, users, savedAt: new Date().toISOString() })); } catch (_) {} } });
 
   const isDocOf = (p, col) => p.startsWith(col + '/') && p.slice(col.length + 1).indexOf('/') === -1;

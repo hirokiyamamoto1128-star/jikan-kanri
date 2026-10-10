@@ -193,6 +193,8 @@ table.wk tr.me td{background:var(--warn-bg)}
 .reqpick{display:none}
 @media (max-width:760px){.reqwrap{grid-template-columns:1fr}.reqlist{display:none}.reqpick{display:grid}}
 @media (max-width:480px){nav.tabs{padding-inline:8px}nav.tabs button{padding:8px 8px 10px;font-size:13px}}
+.pin{border:1px solid var(--line);background:var(--surface);color:var(--muted);font:inherit;font-size:9px;font-weight:700;border-radius:3px;padding:0 4px;margin-left:2px;cursor:pointer;vertical-align:middle}
+.pin.on{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
 .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
 .who .role{padding:2px 8px;border-radius:999px;background:var(--sunk)}
 .who .role.mgr{background:var(--accent);color:var(--accent-fg)}
@@ -287,7 +289,7 @@ const DEFAULT_SETTINGS = {
   nightFrom: 22, nightTo: 29,
   peakFrom: 16, peakTo: 23,
   targetRate: {1:22,2:22,3:22,4:22,5:22,6:22,0:22},
-  minShift: 4, adjustEmployees: false, paid28: false
+  minShift: 4, adjustEmployees: false, paid28: false, minEmp: 2
 };
 const COLORS = ['yellow','blue','green','teal','pink','red','violet','gray','orange'];
 const WD = ['日','月','火','水','木','金','土'];
@@ -573,7 +575,7 @@ function adjustDay(date){
   for(let guard=0;guard<300&&cost>cap;guard++){
     const B=hourCover(d);let best=null,bs=-Infinity;
     for(const sh of d.shifts){const c=calcShift(sh),staff=S.staff[sh.sid];
-      if(!c.on||!staff||(!st.adjustEmployees&&staff.kind==='社員'))continue;
+      if(!c.on||!staff||sh.pin||(!st.adjustEmployees&&staff.kind==='社員'))continue;
       if(sh.end-sh.start-0.5<Number(st.minShift||4))continue;
       for(const edge of ['end','start']){
         const old=sh[edge],t=edge==='end'?sh.end-0.5:sh.start,h=Math.floor(t-8);
@@ -602,6 +604,73 @@ function adjustDay(date){
   const left=cost-cap;
   return {ok:true,cut,msg:`${md(date)}：${log.size}人・計${n1(cut)}時間を調整${left>0?`。理想人数を守るとここまでで、目標まであと${yen(left)}（${(cost/budget*100).toFixed(1)}%）です`:`。人件費率 ${(cost/budget*100).toFixed(1)}%（目標${rate}%）`}`};
 }
+/* ---------- 社員シフトの自動作成 ----------
+ 優先順位：①決め打ち（固定）②社員の休み希望 ③1日の最低社員数 ④週の出勤日数
+ ・決め打ちと休み希望・有給は動かさない
+ ・残りの日を、社員が足りない日 → 売上予算が大きい日 → 土日 の順に埋める
+ ・休み希望を守った結果、社員が足りない日や出勤日数が足りない人は、無理に出さずに知らせる */
+function genEmployees(week){
+  const st=set(),dates=weekDates(week),emps=staffList().filter(x=>x.kind==='社員'),minE=Number(st.minEmp??2),notes=[];
+  if(!emps.length)return {msg:'名簿に社員がいません'};
+  for(const dt of dates){const d=ensureDay(dt);d.shifts=d.shifts.filter(r=>!(r.gen&&emps.some(e=>e.id===r.sid)))}
+  const state={},cnt={};dates.forEach(dt=>cnt[dt]=0);
+  for(const e of emps){state[e.id]={};
+    for(const dt of dates){const r=(dayDoc(dt).shifts||[]).find(x=>x.sid===e.id);
+      state[e.id][dt]=!r?'free':r.pos===PAID?'paid':isOff(r.pos)?'wish':(r.start!=null&&r.end!=null)?'pin':'free';
+      if(state[e.id][dt]==='pin')cnt[dt]++}}
+  const need={};for(const e of emps){const W=Number(e.workDays??5);need[e.id]=Math.max(0,W-dates.filter(dt=>state[e.id][dt]==='pin').length)}
+  const budgetOf=dt=>Number(dayDoc(dt).budget)||0;
+  for(;;){let best=null,bs=-Infinity;
+    for(const e of emps){if(need[e.id]<=0)continue;
+      for(const dt of dates){if(state[e.id][dt]!=='free')continue;
+        const sc=(cnt[dt]<minE?1000*(minE-cnt[dt]):0)-cnt[dt]*30+budgetOf(dt)/10000+([0,6].includes(wd(dt))?5:0)+need[e.id];
+        if(sc>bs){bs=sc;best=[e,dt]}}}
+    if(!best)break;const [e,dt]=best;state[e.id][dt]='work';cnt[dt]++;need[e.id]--}
+  let made=0;
+  for(const e of emps)for(const dt of dates){const d=ensureDay(dt);
+    if(state[e.id][dt]==='work'){d.shifts.push({sid:e.id,start:Number(e.defStart??12),end:Number(e.defEnd??23.5),pos:e.defPos||'',bs:null,gen:true});made++}
+    else if(state[e.id][dt]==='free')d.shifts.push({sid:e.id,start:null,end:null,pos:offPos(),bs:null,gen:true})}
+  dates.forEach(dt=>saveDay(dt));
+  for(const e of emps)if(need[e.id]>0)notes.push(`${e.name}さんは休み希望を優先したため、週${Number(e.workDays??5)}日に${need[e.id]}日足りません`);
+  for(const dt of dates)if(cnt[dt]<minE)notes.push(`${md(dt)}（${WD[wd(dt)]}）は社員が${cnt[dt]}人です（休み希望を優先）`);
+  return {msg:`社員${emps.length}人のシフトを作りました（決め打ちと休み希望はそのまま、出勤${made}日分を追加）。${notes.join('。')}${notes.length?'。':''}`};
+}
+/* 留学生の28時間：固定していない日を短くして収める（できるだけ理想人数を下回らない所から） */
+function adjust28(week){
+  const st=set(),lim=Number(st.limit28),dates=weekDates(week),out=[];
+  for(const s0 of staffList().filter(x=>x.limit28)){
+    const maxRoll=()=>{let m=0,at=null;for(let dt=dates[0];dt<=addDays(dates[6],6);dt=addDays(dt,1)){const h=roll7(s0.id,dt);if(h>m){m=h;at=dt}}return {m,at}};
+    let r=maxRoll();if(r.m<=lim)continue;
+    const before={},log={},dropped=[];let guard=0;
+    // 短くするだけでは収まらないときは、まず固定していない日を1日ずつ休みにする（人が一番余っている日から）
+    for(let g=0;g<7;g++){
+      const winStart=addDays(r.at,-6),mins=Number(st.minShift||4);let trim=0;const cand=[];
+      for(const dt of dates){if(dt<winStart||dt>r.at)continue;const d=ensureDay(dt),sh=d.shifts.find(x=>x.sid===s0.id);if(!sh||sh.pin)continue;
+        const c=calcShift(sh);if(!c.on)continue;trim+=Math.max(0,c.labor-(mins-breakHours(mins)));
+        const B=hourCover(d),ideal=(d.ideal||[]).map(Number);let sur=0;for(let h=Math.floor(sh.start-8);h<Math.ceil(sh.end-8);h++)sur+=(B.H[h]||0)-(ideal[h]||0);cand.push({dt,sh,sur})}
+      if(r.m-lim<=trim||!cand.length)break;
+      cand.sort((a,b)=>b.sur-a.sur);const x=cand[0];before[x.dt]={start:x.sh.start,end:x.sh.end,sh:x.sh,drop:true};
+      x.sh.start=null;x.sh.end=null;x.sh.pos=offPos();x.sh.why=`留学生の週${lim}時間の上限に収めるため休みに（この日は人数に余裕があったため）`;dropped.push(x.dt);saveDay(x.dt);r=maxRoll()}
+    while(r.m>lim&&guard++<200){
+      const winStart=addDays(r.at,-6);let best=null,bs=-Infinity;
+      for(const dt of dates){if(dt<winStart||dt>r.at)continue;const d=ensureDay(dt),sh=d.shifts.find(x=>x.sid===s0.id);
+        if(!sh||sh.pin)continue;const c=calcShift(sh);if(!c.on||sh.end-sh.start-0.5<Number(st.minShift||4))continue;
+        const B=hourCover(d),ideal=(d.ideal||[]).map(Number);
+        for(const edge of ['end','start']){const t=edge==='end'?sh.end-0.5:sh.start,h=Math.floor(t-8),surplus=B.H[h]-0.5-(ideal[h]||0);
+          const sc=(surplus>=0?1000:0)+surplus*10+(edge==='end'?1:0);if(sc>bs){bs=sc;best={sh,edge,dt,surplus}}}}
+      if(!best)break;
+      const {sh,edge,dt}=best;if(!before[dt])before[dt]={start:sh.start,end:sh.end,sh};
+      if(sh.bs==null){const c=calcShift(sh);if(c.brk)sh.bs=breakStart(sh,c)}
+      sh[edge]=edge==='end'?sh.end-0.5:sh.start+0.5;log[dt]=(log[dt]||false)||best.surplus<0;saveDay(dt);r=maxRoll()}
+    for(const [dt,b] of Object.entries(before)){if(b.drop)continue;const sh=b.sh,parts=[];
+      if(sh.start!==b.start)parts.push(`出勤を${tLabel(b.start)}→${tLabel(sh.start)}`);if(sh.end!==b.end)parts.push(`退勤を${tLabel(b.end)}→${tLabel(sh.end)}`);
+      sh.why=`留学生の週${lim}時間の上限に合わせて${parts.join('、')}${log[dt]?'（この時間は理想人数を下回ります）':''}`}
+    const shortened=Object.values(before).filter(b=>!b.drop).length;
+    out.push(r.m>lim?`${s0.name}さん：固定した日だけで${n1(r.m)}hあり、これ以上は下げられません（固定を見直してください）`:`${s0.name}さん：${dropped.length?`${dropped.map(md).join('・')}を休みに、`:''}${shortened?`${shortened}日を短くして`:''}${n1(r.m)}hに`);
+  }
+  return {msg:out.length?out.join('／'):'28時間を超えている留学生はいません'};
+}
+
 /* 希望（LINEで受けた時間）と確定の違い */
 function reqText(r){if(!r)return '';return r.off?'休み希望':`${tLabel(r.start)}–${tLabel(r.end)}`}
 function diffOf(sh){const r=sh.req;if(!r||!S.staff[sh.sid])return null;
@@ -657,15 +726,26 @@ function autoBreaks(date){
 
 /* ---------- 保存（共有DB） ---------- */
 const timers={};
+// 画面を閉じる・更新する・別アプリに切り替える瞬間に、まだ保存待ちの変更をすぐ書き込む
+function flushSaves(){
+  if(!S.db)return;
+  for(const k of Object.keys(timers)){if(timers[k]==null)continue;clearTimeout(timers[k]);timers[k]=null;
+    if(S.days[k]){try{S.db.doc(P('days/'+k)).set(JSON.parse(JSON.stringify(S.days[k])))}catch(_){}}S.pending.delete('d:'+k)}
+  if(S.pending.has('settings')&&S.settings){clearTimeout(setTimer);try{S.db.doc(P('config/settings')).set(JSON.parse(JSON.stringify(S.settings)))}catch(_){}S.pending.delete('settings')}
+  try{window.__localFlush&&window.__localFlush()}catch(_){}
+}
+window.addEventListener('beforeunload',flushSaves);
+window.addEventListener('pagehide',flushSaves);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushSaves()});
 function saveDay(date){
   S.pending.add('d:'+date);
   clearTimeout(timers[date]);
-  timers[date]=setTimeout(async()=>{
+  timers[date]=setTimeout(async()=>{timers[date]=null;
     if(!S.db){S.pending.delete('d:'+date);status();return}
     status('busy');
     try{await S.db.doc(P('days/'+date)).set(JSON.parse(JSON.stringify(S.days[date])));S.pending.delete('d:'+date);status()}
     catch(e){S.pending.delete('d:'+date);writeErr(e)}
-  },500);
+  },300);
   status('busy');
 }
 async function saveStaff(id){
@@ -869,7 +949,7 @@ function vShift(){
       cells+=`<td class="c${k%2===0?' h':''}${on?(br?' brk':' on'):''}" data-act="brk" data-i="${i}" data-t="${t}" title="${tLabel(t)}${on?(br?' 休憩':' — タップで休憩をここへ'):''}"></td>`}
     const nm=S.staff[sh.sid];
     return `<tr style="${posStyle(sh.pos)}">
-      <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
+      <td class="stk"><select class="nm" data-f="sid" data-i="${i}" aria-label="名前">${staffOpts(sh.sid)}</select>${sh.sid&&c.on?`<button class="pin${sh.pin?' on':''}" data-act="pin" data-i="${i}" title="${sh.pin?'決め打ち中：自動作成・調整で動かしません（押すと解除）':'押すと決め打ち（自動作成・調整で動かさない）'}">${sh.pin?'固定':'固定'}</button>`:''}${sh.gen&&!sh.pin?'<span class="subtag" style="background:var(--ink)" title="社員シフトの自動作成で入れた行">自動</span>':''}${sh.sub?'<span class="subtag" title="アルバイトさんが提出した希望">提出</span>':''}${(()=>{const s=S.staff[sh.sid];if(!s?.limit28||!c.on)return '';let mx=0;for(let k=0;k<7;k++)mx=Math.max(mx,roll7(s.id,addDays(date,k)));const lim=set().limit28;return mx>lim?`<span class="tag28" title="この日を含む7日間で${n1(mx)}時間">28h超</span>`:mx>lim-3?`<span class="tag28 near" title="この日を含む7日間で${n1(mx)}時間">残${n1(lim-mx)}h</span>`:''})()}</td>
       ${sh.pos===PAID?`<td colspan="2" style="white-space:nowrap;padding:0 4px"><input type="number" step="0.5" min="0" max="12" data-f="paidH" data-i="${i}" value="${sh.paidH??''}" style="width:64px" aria-label="有給の時間"> h</td>`:
       `<td><select class="t" data-f="start" data-i="${i}" aria-label="開始">${tOptions(sh.start,8,31.5)}</select></td>
       <td><select class="t" data-f="end" data-i="${i}" aria-label="終了">${tOptions(sh.end,8.5,32)}</select></td>`}
@@ -899,7 +979,7 @@ function vShift(){
       <span class="hint">「ポジション別人数」の理想人数と、スキルタブのレベル（リーダーを優先して1人ずつ配置）・過去の担当をもとに決めます。フリー・ヘルプの人はそのままです。</span></div>${undo}`:'';
   return `<section class="panel" aria-label="週と日の選択">
     <div class="bar"><h2>シフト作成</h2>${weekNav()}
-      <span style="margin-left:auto" class="bar">${weekEmpty?`<button class="btn sm" data-act="copyWeek">前週をコピー</button>`:''}</span></div>
+      <span style="margin-left:auto" class="bar"><button class="btn sm" data-act="genEmp" title="決め打ち→休み希望→最低社員数→週の出勤日数の順で作ります">社員シフトを自動作成</button><button class="btn sm" data-act="adj28">28時間を調整</button>${weekEmpty?`<button class="btn sm" data-act="copyWeek">前週をコピー</button>`:''}</span></div>
     <p class="hint" style="margin:0">「希望入力」で入れた希望がここに並びます。予算・理想人数を入れて、自動配置や目標人件費率の調整で仕上げます。</p>
     ${confirm}
     <div class="days">${days}</div>
@@ -1146,7 +1226,8 @@ function bulkInit(sid){
     if(!row)days[dt]={st:''};
     else if(row.pos===PAID)days[dt]={st:'paid',h:row.paidH??null};
     else if(isOff(row.pos))days[dt]={st:'off'};
-    else if(row.start!=null&&row.end!=null){const r=row.req&&!row.req.off?row.req:row;days[dt]={st:'on',start:r.start,end:r.end}}
+    else if(row.gen)days[dt]={st:''};
+    else if(row.start!=null&&row.end!=null){const r=row.req&&!row.req.off?row.req:row;days[dt]={st:'on',start:r.start,end:r.end,pin:!!row.pin}}
     else days[dt]={st:''}}
   return {sid,week:S.week,days,orig:JSON.stringify(days)};
 }
@@ -1173,9 +1254,11 @@ function vBulk(page){
   const B=S.bulk,s=S.staff[B.sid],dates=weekDates(S.week),open=S.bulkOpen!=null?S.bulkOpen:true;
   const has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
   const rows=dates.map(dt=>{const v=B.days[dt]||{st:''},w=wd(dt);
-    const seg=[['on','出勤'],['off','休み'],['paid','有給']].map(([k,l])=>`<button class="${k==='on'?'on':k==='off'?'off':''}" data-act="bday" data-d="${dt}" data-v="${k}" aria-pressed="${v.st===k}"${k==='paid'&&v.st==='paid'?' style="background:var(--ink);color:var(--surface)"':''}>${l}</button>`).join('');
+    const emp=s.kind==='社員';
+    const seg=[['on',emp?'出勤（固定）':'出勤'],['off',emp?'休み希望':'休み'],['paid','有給']].map(([k,l])=>`<button class="${k==='on'?'on':k==='off'?'off':''}" data-act="bday" data-d="${dt}" data-v="${k}" aria-pressed="${v.st===k}"${k==='paid'&&v.st==='paid'?' style="background:var(--ink);color:var(--surface)"':''}>${l}</button>`).join('');
     const tm=v.st==='on'?`<select data-bf="start" data-d="${dt}" aria-label="${md(dt)}の開始">${tOptions(v.start,8,31.5)}</select><span>〜</span><select data-bf="end" data-d="${dt}" aria-label="${md(dt)}の終了">${tOptions(v.end,8.5,32)}</select>`
-      :v.st==='paid'?`<input type="number" step="0.5" min="0" max="12" data-bf="h" data-d="${dt}" value="${v.h??''}" style="width:70px" aria-label="${md(dt)}の有給時間"> 時間`:v.st===''?'<span class="muted" style="font-size:12px">未入力</span>':'';
+      +(emp?'':`<button class="pin${v.pin?' on':''}" data-act="bpin" data-d="${dt}" style="font-size:11px;padding:2px 8px" title="この日は必ず入れる（自動調整で動かさない）">固定</button>`)
+      :v.st==='paid'?`<input type="number" step="0.5" min="0" max="12" data-bf="h" data-d="${dt}" value="${v.h??''}" style="width:70px" aria-label="${md(dt)}の有給時間"> 時間`:v.st===''?`<span class="muted" style="font-size:12px">${emp?'おまかせ（自動作成で決めます）':'未入力'}</span>`:'';
     return `<div class="sub-day"><div class="dl"><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}</div><div class="seg" role="group" aria-label="${md(dt)}">${seg}</div><div class="tm">${tm}</div></div>`}).join('');
   const lab=Object.values(B.days).reduce((a,v)=>a+(v.st==='on'&&v.end>v.start?(v.end-v.start)-breakHours(v.end-v.start):0),0);
   const ph=Object.values(B.days).reduce((a,v)=>a+(v.st==='paid'?Number(v.h)||0:0),0),lim=set().limit28,tot=lab+(set().paid28?ph:0);
@@ -1188,7 +1271,7 @@ function vBulk(page){
     <div class="bar"><span class="muted">労働 ${n1(lab)}h${ph?`・有給 ${n1(ph)}h`:''}</span>
       ${s.limit28?`<span class="pill ${tot>lim?'bad':tot>lim-3?'warn':'good'}">${tot>lim?`週${lim}時間を${n1(tot-lim)}h超過`:`週${lim}時間まで あと${n1(lim-tot)}h`}</span>`:''}
       <span style="margin-left:auto" class="bar"><button class="btn" data-act="bSave"${dirty?'':' disabled'}>登録</button><button class="btn pri" data-act="bSaveNext">登録して次の人へ</button></span></div>
-    <p class="hint" style="margin:0">出勤の時間は「希望」としても記録されます（あとで自動調整しても、希望との違いがわかります）。</p>
+    <p class="hint" style="margin:0">${s.kind==='社員'?'社員は「出勤（固定）」＝決め打ち、「休み希望」＝第2優先。空欄の日は「シフト作成」の「社員シフトを自動作成」で、週の出勤日数に合わせて決まります。':'出勤の時間は「希望」としても記録されます。「固定」を押した日は、28時間や人件費の自動調整でも動かしません。'}</p>
     </div></section>`;
 }
 function bulkSave(){
@@ -1197,10 +1280,11 @@ function bulkSave(){
     if(JSON.stringify(v)===JSON.stringify(orig[dt]))continue;
     if(v.st==='on'&&!(v.end>v.start)){toast(`${md(dt)}の時間を選んでください（終了は開始より後）`);return false}
     const d=ensureDay(dt);let i=d.shifts.findIndex(x=>x.sid===B.sid),row=i>=0?d.shifts[i]:null;
-    if(v.st===''){if(row){d.shifts.splice(i,1);n++;saveDay(dt)}continue}
+    if(v.st===''){if(row&&!row.gen){d.shifts.splice(i,1);n++;saveDay(dt)}continue}
     if(!row){row={sid:B.sid,start:null,end:null,pos:'',bs:null};d.shifts.push(row)}
-    if(v.st==='on'){if(isOff(row.pos))row.pos='';row.start=v.start;row.end=v.end;row.req={start:v.start,end:v.end};row.why='';row.bs=null}
-    else if(v.st==='off'){row.pos=offPos();row.start=null;row.end=null;row.req={off:true};row.why=''}
+    const emp=S.staff[B.sid]?.kind==='社員';delete row.gen;
+    if(v.st==='on'){if(isOff(row.pos))row.pos=emp?(S.staff[B.sid].defPos||''):'';row.start=v.start;row.end=v.end;row.req={start:v.start,end:v.end};row.why='';row.bs=null;row.pin=emp?true:!!v.pin}
+    else if(v.st==='off'){row.pos=offPos();row.start=null;row.end=null;row.req={off:true};row.why='';row.pin=false}
     else{row.pos=PAID;row.paidH=Number(v.h)||0;row.start=null;row.end=null;delete row.req;row.why=''}
     n++;saveDay(dt)}
   B.orig=JSON.stringify(B.days);
@@ -1285,6 +1369,15 @@ function vWeek(){
 }
 
 /* --- 名簿 --- */
+function empRules(){
+  const st=set(),emps=staffList().filter(x=>x.kind==='社員');if(!emps.length)return '';
+  const posSel=(id,v)=>`<select data-sf="defPos" data-id="${id}" aria-label="基本のポジション"><option value="">（自動配置）</option>${st.positions.filter(p=>p.kind!=='off').map(p=>`<option${v===p.name?' selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
+  return `<section class="panel"><div class="bar"><h2>社員の勤務ルール</h2><label class="field" style="margin-left:auto"><span>1日の最低社員数</span><input type="number" min="0" max="10" id="s_minEmp" data-sset="minEmp" value="${st.minEmp??2}" style="width:80px"></label></div>
+    <div class="scroll"><table class="t"><thead><tr><th>社員</th><th class="r">週の出勤日数</th><th>基本の開始</th><th>基本の終了</th><th>基本のポジション</th></tr></thead><tbody>
+    ${emps.map(e=>`<tr><td><b>${esc(e.name)}</b></td><td class="r"><input type="number" min="0" max="7" data-sf="workDays" data-id="${e.id}" value="${e.workDays??5}" style="width:60px" aria-label="週の出勤日数"></td>
+      <td><select data-sf="defStart" data-id="${e.id}" aria-label="基本の開始">${tOptions(Number(e.defStart??12),8,31.5)}</select></td><td><select data-sf="defEnd" data-id="${e.id}" aria-label="基本の終了">${tOptions(Number(e.defEnd??23.5),8.5,32)}</select></td><td>${posSel(e.id,e.defPos||'')}</td></tr>`).join('')}</tbody></table></div>
+    <p class="hint">「シフト作成」の「社員シフトを自動作成」で使います。決め打ち（固定）と休み希望は動かさず、残りの日をこの出勤日数・時間で埋めます。</p></section>`;
+}
 function vRoster(){
   const dates=weekDates(S.week), list=staffList(true);
   const rows=list.map((s,idx)=>{
@@ -1310,7 +1403,7 @@ function vRoster(){
   ${list.length?`<div class="scroll"><table class="t"><thead><tr><th>#</th><th>スタッフ名</th><th>区分</th><th>時給</th><th>交通費（往復）</th>${dates.map(dt=>`<th class="r">${WD[wd(dt)]}</th>`).join('')}<th class="r">合計h</th><th class="r">金額</th><th class="r">交通費</th><th>スキル</th><th>対象</th><th></th></tr></thead>
   <tbody>${rows}</tbody><tfoot><tr><td colspan="5">日別人件費</td>${tot.map(v=>`<td class="num">${v?Math.round(v/1000)+'k':'0'}</td>`).join('')}<td></td><td class="num">${yen(tot.reduce((a,b)=>a+b,0))}</td><td colspan="4"></td></tr></tfoot></table></div>
   <p class="hint">スキルは「スキル」タブで設定します。「留学生」にチェックした人は、連続7日間の労働時間が28時間を超えると警告が出ます。有給の時間は「有給」タブで管理します。</p>`:
-  `<div class="empty">スタッフが登録されていません。「＋ スタッフを追加」から名前・時給・交通費を入れてください。</div>`}</section>`;
+  `<div class="empty">スタッフが登録されていません。「＋ スタッフを追加」から名前・時給・交通費を入れてください。</div>`}</section>${empRules()}`;
 }
 
 /* --- 社員勤務時間 --- */
@@ -1441,7 +1534,7 @@ app.addEventListener('change',e=>{
     saveDay(date);return render();
   }
   if(el.dataset.sf){const s=S.staff[el.dataset.id],k=el.dataset.sf;
-    if(el.type==='checkbox')s[k]=el.checked; else if(['wage','fare','paidGrant','paidDayH'].includes(k))s[k]=el.value===''?null:Number(el.value); else s[k]=el.value==='P/A'?'PA':el.value;
+    if(el.type==='checkbox')s[k]=el.checked; else if(['wage','fare','paidGrant','paidDayH','workDays','defStart','defEnd'].includes(k))s[k]=el.value===''?null:Number(el.value); else s[k]=el.value==='P/A'?'PA':el.value;
     if(k==='kind'&&s.kind==='PA')s.paCount=false;
     saveStaff(s.id);return render()}
   if(el.dataset.pf){S.settings=S.settings||clone(DEFAULT_SETTINGS);const p=S.settings.positions[+el.dataset.i],old=p.name;p[el.dataset.pf]=el.value;
@@ -1469,10 +1562,14 @@ app.addEventListener('click',e=>{
   if(a==='delRow'){const d=ensureDay(curDate());d.shifts.splice(+b.dataset.i,1);saveDay(curDate());return render()}
   if(a==='brk'){const d=ensureDay(curDate()),sh=d.shifts[+b.dataset.i],c=calcShift(sh),t=+b.dataset.t;
     if(!c.on||!c.brk||t<sh.start||t>=sh.end)return;sh.bs=Math.min(t,sh.end-c.brk);saveDay(curDate());return render()}
+  if(a==='bpin'){const v=S.bulk.days[b.dataset.d];v.pin=!v.pin;return render()}
+  if(a==='pin'){const d=ensureDay(curDate()),sh=d.shifts[+b.dataset.i];if(!sh)return;sh.pin=!sh.pin;if(sh.pin)delete sh.gen;saveDay(curDate());toast(sh.pin?'決め打ちにしました（自動作成・調整で動かしません）':'決め打ちを外しました');return render()}
+  if(a==='genEmp'||a==='adj28'){const ds=weekDates(S.week),before=ds.map(dt=>[dt,clone(dayDoc(dt).shifts||[])]);
+    const r=a==='genEmp'?genEmployees(S.week):adjust28(S.week);S.undo={date:curDate(),multi:before,shifts:clone(dayDoc(curDate()).shifts||[]),msg:r.msg};return render()}
   if(a==='bpick'){if(S.bulk&&JSON.stringify(S.bulk.days)!==S.bulk.orig)bulkSave();S.bulk=bulkInit(b.dataset.id);return render()}
   if(a==='bday'){const v=S.bulk.days[b.dataset.d],k=b.dataset.v;
     if(v.st===k)S.bulk.days[b.dataset.d]={st:''};
-    else S.bulk.days[b.dataset.d]=k==='on'?{st:'on',start:v.start??S.bulkT?.[0]??17,end:v.end??S.bulkT?.[1]??23.5}:k==='paid'?{st:'paid',h:Number(S.staff[S.bulk.sid]?.paidDayH)||null}:{st:'off'};return render()}
+    else S.bulk.days[b.dataset.d]=k==='on'?{st:'on',start:v.start??(S.staff[S.bulk.sid]?.kind==='社員'?Number(S.staff[S.bulk.sid].defStart??12):S.bulkT?.[0]??17),end:v.end??(S.staff[S.bulk.sid]?.kind==='社員'?Number(S.staff[S.bulk.sid].defEnd??23.5):S.bulkT?.[1]??23.5)}:k==='paid'?{st:'paid',h:Number(S.staff[S.bulk.sid]?.paidDayH)||null}:{st:'off'};return render()}
   if(a==='bAll'){for(const dt of Object.keys(S.bulk.days)){const v=S.bulk.days[dt];S.bulk.days[dt]=b.dataset.v==='on'?{st:'on',start:v.start??S.bulkT?.[0]??17,end:v.end??S.bulkT?.[1]??23.5}:{st:'off'}}return render()}
   if(a==='bTime'){const s0=Number(document.getElementById('bS').value),e0=Number(document.getElementById('bE').value);if(!(e0>s0))return toast('終了は開始より後にしてください');
     S.bulkT=[s0,e0];let n=0;for(const v of Object.values(S.bulk.days))if(v.st==='on'){v.start=s0;v.end=e0;n++}if(!n)toast('先に「出勤」の日を選んでください');return render()}
