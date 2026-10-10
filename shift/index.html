@@ -587,7 +587,8 @@ function adjustDay(date){
         sh[edge]=old;
         if(!ok)continue;
         const surplus=B.H[h]-ideal[h],saved=c.cost-nc.cost;
-        const sc=surplus*100+saved/50+weekHours(sh.sid,date)*0.5+(edge==='end'?1:0);
+        const keep28=staff.limit28&&rollMax(sh.sid,date,addDays(date,6)).m<=Number(st.limit28)?300:0; // 留学生は28時間まで働きたいので後回し
+        const sc=surplus*100+saved/50+weekHours(sh.sid,date)*0.5+(edge==='end'?1:0)-keep28;
         if(sc>bs){bs=sc;best={sh,edge,h,surplus}}}}
     if(!best)break;
     const {sh,edge,h}=best;sh[edge]=edge==='end'?sh.end-0.5:sh.start+0.5;
@@ -687,7 +688,12 @@ function lineText(){
 }
 
 /* 28時間管理：どの連続7日間でも労働時間が上限を超えないか */
-function roll7(sid,end){let h=0;const p=set().paid28;for(let k=0;k<7;k++){const dt=addDays(end,-k);h+=laborOf(dt,sid)+(p?paidOf(dt,sid):0)}return h}
+// 28時間：日付は月をまたいでも連続で数える。ov は入力途中の値（日付→時間）で上書きするとき
+function hoursFn(sid,ov){const p=set().paid28;return dt=>ov&&Object.prototype.hasOwnProperty.call(ov,dt)?ov[dt]:laborOf(dt,sid)+(p?paidOf(dt,sid):0)}
+function roll7(sid,end,ov){const f=hoursFn(sid,ov);let h=0;for(let k=0;k<7;k++)h+=f(addDays(end,-k));return h}
+function rollMax(sid,from,to,ov){let m=0,at=null;for(let e=from;e<=to;e=addDays(e,1)){const h=roll7(sid,e,ov);if(h>m){m=h;at=e}}return {m,at}}
+// その日を含むどの7日間も上限を超えないために、その日にあと何時間足せるか
+function capOn(sid,dt,ov){return Number(set().limit28)-rollMax(sid,dt,addDays(dt,6),ov).m}
 function check28(dates){
   const lim=set().limit28,out=[];
   for(const s of staffList(true).filter(x=>x.limit28)){
@@ -1253,15 +1259,20 @@ function vBulk(page){
   if(!S.bulk||S.bulk.week!==S.week||!S.staff[S.bulk.sid])S.bulk=bulkInit(S.bulk&&S.staff[S.bulk.sid]?S.bulk.sid:list.find(s=>s.kind!=='社員')?.id||list[0].id);
   const B=S.bulk,s=S.staff[B.sid],dates=weekDates(S.week),open=S.bulkOpen!=null?S.bulkOpen:true;
   const has=sid=>dates.some(dt=>(dayDoc(dt).shifts||[]).some(x=>x.sid===sid));
+  const ov28=()=>{const o={};for(const [d0,v0] of Object.entries(B.days))o[d0]=v0.st==='on'&&v0.end>v0.start?(v0.end-v0.start)-breakHours(v0.end-v0.start):v0.st==='paid'&&set().paid28?Number(v0.h)||0:0;return o};
   const rows=dates.map(dt=>{const v=B.days[dt]||{st:''},w=wd(dt);
     const emp=s.kind==='社員';
     const seg=[['on',emp?'出勤（固定）':'出勤'],['off',emp?'休み希望':'休み'],['paid','有給']].map(([k,l])=>`<button class="${k==='on'?'on':k==='off'?'off':''}" data-act="bday" data-d="${dt}" data-v="${k}" aria-pressed="${v.st===k}"${k==='paid'&&v.st==='paid'?' style="background:var(--ink);color:var(--surface)"':''}>${l}</button>`).join('');
     const tm=v.st==='on'?`<select data-bf="start" data-d="${dt}" aria-label="${md(dt)}の開始">${tOptions(v.start,8,31.5)}</select><span>〜</span><select data-bf="end" data-d="${dt}" aria-label="${md(dt)}の終了">${tOptions(v.end,8.5,32)}</select>`
       +(emp?'':`<button class="pin${v.pin?' on':''}" data-act="bpin" data-d="${dt}" style="font-size:11px;padding:2px 8px" title="この日は必ず入れる（自動調整で動かさない）">固定</button>`)
       :v.st==='paid'?`<input type="number" step="0.5" min="0" max="12" data-bf="h" data-d="${dt}" value="${v.h??''}" style="width:70px" aria-label="${md(dt)}の有給時間"> 時間`:v.st===''?`<span class="muted" style="font-size:12px">${emp?'おまかせ（自動作成で決めます）':'未入力'}</span>`:'';
-    return `<div class="sub-day"><div class="dl"><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}</div><div class="seg" role="group" aria-label="${md(dt)}">${seg}</div><div class="tm">${tm}</div></div>`}).join('');
+    const cap=s.limit28?capOn(B.sid,dt,ov28()):null;
+    const capTx=cap==null?'':`<span style="font-size:11px;font-weight:700;color:var(--${cap<0?'bad':cap<3?'warn':'muted'})">${cap<0?`28h超過 ${n1(-cap)}h`:`あと${n1(cap)}h`}</span>`;
+    return `<div class="sub-day"><div class="dl"><span class="w ${w===6?'w-sat':w===0?'w-sun':w===5?'w-fri':''}" style="display:inline-block;min-width:1.6em;text-align:center;border-radius:3px">${WD[w]}</span> ${md(dt)}</div><div class="seg" role="group" aria-label="${md(dt)}">${seg}</div><div class="tm">${tm}${capTx}</div></div>`}).join('');
   const lab=Object.values(B.days).reduce((a,v)=>a+(v.st==='on'&&v.end>v.start?(v.end-v.start)-breakHours(v.end-v.start):0),0);
-  const ph=Object.values(B.days).reduce((a,v)=>a+(v.st==='paid'?Number(v.h)||0:0),0),lim=set().limit28,tot=lab+(set().paid28?ph:0);
+  const ph=Object.values(B.days).reduce((a,v)=>a+(v.st==='paid'?Number(v.h)||0:0),0),lim=Number(set().limit28);
+  const ov={};for(const [dt,v] of Object.entries(B.days))ov[dt]=v.st==='on'&&v.end>v.start?(v.end-v.start)-breakHours(v.end-v.start):v.st==='paid'&&set().paid28?Number(v.h)||0:0;
+  const rm=s.limit28?rollMax(B.sid,dates[0],addDays(dates[6],6),ov):{m:0,at:null};
   const dirty=JSON.stringify(B.days)!==B.orig;
   return `<section class="panel" id="bulkForm"><div style="display:grid;gap:10px">
     <div class="bar"><h3 style="font-size:16px;color:var(--fg)">${esc(s.name)}</h3>${s.limit28?'<span class="tag28 near">留学生</span>':''}
@@ -1269,7 +1280,7 @@ function vBulk(page){
       <select id="bS" aria-label="まとめて入れる開始">${tOptions(S.bulkT?.[0]??17,8,31.5)}</select>〜<select id="bE" aria-label="まとめて入れる終了">${tOptions(S.bulkT?.[1]??23.5,8.5,32)}</select><button class="btn sm" data-act="bTime">出勤日にこの時間</button></span></div>
     <div>${rows}</div>
     <div class="bar"><span class="muted">労働 ${n1(lab)}h${ph?`・有給 ${n1(ph)}h`:''}</span>
-      ${s.limit28?`<span class="pill ${tot>lim?'bad':tot>lim-3?'warn':'good'}">${tot>lim?`週${lim}時間を${n1(tot-lim)}h超過`:`週${lim}時間まで あと${n1(lim-tot)}h`}</span>`:''}
+      ${s.limit28?`<span class="pill ${rm.m>lim?'bad':rm.m>lim-3?'warn':'good'}" title="前後の週も含めて、どの連続7日間で見ても${lim}時間以内かを見ています">${rm.m>lim?`7日間で${n1(rm.m)}h（${md(addDays(rm.at,-6))}〜${md(rm.at)}）${n1(rm.m-lim)}h超過`:`どの7日間でも最大${n1(rm.m)}h・あと${n1(lim-rm.m)}h入れられます`}</span>`:''}
       <span style="margin-left:auto" class="bar"><button class="btn" data-act="bSave"${dirty?'':' disabled'}>登録</button><button class="btn pri" data-act="bSaveNext">登録して次の人へ</button></span></div>
     <p class="hint" style="margin:0">${s.kind==='社員'?'社員は「出勤（固定）」＝決め打ち、「休み希望」＝第2優先。空欄の日は「シフト作成」の「社員シフトを自動作成」で、週の出勤日数に合わせて決まります。':'出勤の時間は「希望」としても記録されます。「固定」を押した日は、28時間や人件費の自動調整でも動かしません。'}</p>
     </div></section>`;
@@ -1427,18 +1438,18 @@ function v28(){
   const dates=Array.from({length:28},(_,i)=>addDays(start,i));
   const rows=list.map(s=>{
     let max=0,maxEnd=null;
-    const cells=dates.map(dt=>{const h=laborOf(dt,s.id);
-      let roll=0;for(let k=0;k<7;k++)roll+=laborOf(addDays(dt,-k),s.id);
+    const cells=dates.map(dt=>{const h=laborOf(dt,s.id),ph=paidOf(dt,s.id);
+      const roll=roll7(s.id,dt);
       if(roll>max){max=roll;maxEnd=dt}
-      const over=roll>st.limit28;
-      return `<td class="num ${over?'cell-bad':''}" title="${md(addDays(dt,-6))}〜${md(dt)} の7日間合計 ${n1(roll)}h">${h?n1(h):'<span class="muted">0</span>'}</td>`}).join('');
+      const over=roll>st.limit28,cap=capOn(s.id,dt);
+      return `<td class="num ${over?'cell-bad':''}" title="${md(addDays(dt,-6))}〜${md(dt)} の7日間合計 ${n1(roll)}h／この日にあと${n1(Math.max(0,cap))}h入れられます">${h?n1(h):ph?`<span style="color:var(--ink)">有${n1(ph)}</span>`:'<span class="muted">0</span>'}<div style="font-size:10px;font-weight:400;color:var(--${cap<0?'bad':'muted'})">${cap<0?'超過':'+'+n1(cap)}</div></td>`}).join('');
     const state=max>st.limit28?`<span class="pill bad">超過 ${n1(max)}h</span>`:max>st.limit28-3?`<span class="pill warn">残り${n1(st.limit28-max)}h</span>`:`<span class="pill good">${n1(max)}h</span>`;
     return `<tr><td style="white-space:nowrap"><b>${esc(s.name)}</b></td><td>${state}<div class="muted" style="font-size:11px">${maxEnd?md(addDays(maxEnd,-6))+'〜'+md(maxEnd):''}</div></td>${cells}</tr>`}).join('');
   return `<section class="panel"><div class="bar"><h2>28時間管理</h2>
     <label class="field"><span>開始日</span><input type="date" id="h28s" data-f="h28Start" value="${start}"></label>
-    <span class="hint">どの連続7日間でも労働時間が${st.limit28}時間を超えないかを確認します。赤いマスは、その日までの7日間合計が超えている日です。</span></div>
+    <span class="hint">月をまたいでも、どの日から数えた連続7日間でも${st.limit28}時間以内かを確認します。上の数字がその日の労働時間、下の「+」がその日にあと入れられる時間（その日を含むどの7日間も${st.limit28}時間に収まる範囲）です。赤は7日間合計が超えている日です。</span></div>
   ${list.length?`<div class="scroll"><table class="t"><thead><tr><th>名前</th><th>最大7日合計</th>${dates.map((dt,i)=>`<th class="r" style="${i%7===0?'border-left:2px solid var(--muted)':''}">${WD[wd(dt)]}<br>${md(dt)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`:
-  '<div class="empty">28時間管理の対象者がいません。「名簿」タブで「28h」にチェックを入れてください。</div>'}</section>`;
+  '<div class="empty">28時間管理の対象者がいません。「マスタ → 名簿」で「留学生」にチェックを入れてください。</div>'}</section>`;
 }
 
 /* --- 交通費算出 --- */
