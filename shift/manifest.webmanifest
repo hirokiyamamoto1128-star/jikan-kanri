@@ -1,6 +1,6 @@
 {
-  "name": "シフト表",
-  "short_name": "シフト表",
+  "name": "シフトマネージャー",
+  "short_name": "シフトマネージャー",
   "description": "シフト作成・人件費管理",
   "start_url": "./",
   "scope": "./",

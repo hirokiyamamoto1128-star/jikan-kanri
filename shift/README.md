@@ -1,4 +1,4 @@
-# シフト表（完成版 1.1）
+# シフトマネージャー
 
 銀だこハイボール横丁 東銀座店のシフト作成・人件費管理WEBアプリです。
 URL：https://hirokiyamamoto1128-star.github.io/jikan-kanri/shift/
